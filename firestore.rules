@@ -346,6 +346,15 @@ service cloud.firestore {
           (
             existing().ownerUid == request.auth.uid &&
             existing().status in ['open', 'locked'] &&
+            incoming().status == existing().status &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'yesPoolZatoshis', 'noPoolZatoshis', 'yesSharesOutstanding',
+              'noSharesOutstanding', 'totalVolumeZatoshis', 'liquidityZatoshis', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            existing().status in ['open', 'locked'] &&
             incoming().status == 'resolved' &&
             incoming().winningOutcome in ['YES', 'NO'] &&
             incoming().resolvedAt is string &&
@@ -358,12 +367,16 @@ service cloud.firestore {
     match /shielded_bets/{betId} {
       allow get: if isValidId(betId);
       allow list: if true;
-      allow create: if isAdmin() &&
+      allow create: if isVerifiedUser() &&
         isValidId(betId) &&
         isValidShieldedBet(incoming()) &&
         incoming().id == betId &&
         exists(/databases/$(database)/documents/markets/$(incoming().marketId)) &&
-        incoming().createdAt == request.time;
+        incoming().createdAt == request.time &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/markets/$(incoming().marketId)).data.ownerUid == request.auth.uid
+        );
       allow update, delete: if false;
     }
 

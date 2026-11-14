@@ -290,11 +290,11 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
   const balances = walletBalance.step === 'loaded' ? walletBalance.data.balances : [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header & Official Pollar Wallet Widget */}
-      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 pb-6 border-b border-slate-200">
-        <div className="space-y-2 max-w-2xl">
-          <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+      <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 sm:gap-6 pb-5 sm:pb-6 border-b border-slate-200">
+        <div className="space-y-2 max-w-2xl min-w-0">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
             Pollar Zero-VPS Multichain Layer
           </h1>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -326,7 +326,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
               href="https://dashboard.pollar.xyz"
               target="_blank"
               rel="noreferrer"
-              className="px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 whitespace-nowrap"
+              className="min-h-[44px] inline-flex items-center px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 whitespace-nowrap"
             >
               Get Keys at dashboard.pollar.xyz
             </a>
@@ -336,7 +336,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
 
       {/* Configuration Readiness Banner */}
       {(!publishableConfigured || !serverStatus?.secretKeyConfigured) && (
-        <section className="bg-white border border-amber-300 rounded-xl p-5 flex flex-col md:flex-row md:items-start justify-between gap-4">
+        <section className="bg-white border border-amber-300 rounded-xl p-4 sm:p-5 flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden="true" />
             <div className="space-y-1 text-sm">
@@ -376,11 +376,11 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
       )}
 
       {/* Session & Multi-Chain Wallets */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
         {/* Left: Connected Session, Wallets & Live Balances */}
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
+            <div className="space-y-1 min-w-0">
               <h2 className="font-display text-lg font-semibold text-slate-900">
                 01. Social Login & Embedded Wallets
               </h2>
@@ -393,7 +393,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
               <button
                 type="button"
                 onClick={() => void logout()}
-                className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg whitespace-nowrap cursor-pointer"
+                className="min-h-[36px] px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
               >
                 Disconnect Pollar
               </button>
@@ -401,7 +401,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
           </div>
 
           {!isAuthenticated ? (
-            <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+            <div className="p-4 sm:p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
               <p className="text-xs text-slate-600 leading-relaxed">
                 Authenticate via Google OAuth, Email OTP, Passkey Smart Wallet, or external Stellar /
                 Solana adapters.
@@ -411,7 +411,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                   type="button"
                   disabled={!publishableConfigured}
                   onClick={() => login({ provider: 'google' })}
-                  className="px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
+                  className="min-h-[44px] px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
                 >
                   Continue with Google (Pollar)
                 </button>
@@ -419,7 +419,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                   type="button"
                   disabled={!publishableConfigured}
                   onClick={() => openLoginModal()}
-                  className="px-4 py-2.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
+                  className="min-h-[44px] px-4 py-2.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
                 >
                   Open Email / Passkey / Wallet Modal
                 </button>
@@ -563,7 +563,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
             <h3 className="text-xs font-semibold text-slate-500">
               Pre-Built @pollar/react Workflows
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 min-[360px]:grid-cols-2 sm:grid-cols-3 gap-2">
               {[
                 { label: 'Balances', icon: Wallet, action: openWalletBalanceModal },
                 { label: 'Send Modal', icon: Send, action: openSendModal },
@@ -586,7 +586,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                     type="button"
                     disabled={disabled}
                     onClick={item.action}
-                    className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 disabled:opacity-45 disabled:cursor-not-allowed inline-flex items-center gap-1.5 whitespace-nowrap transition-colors duration-150 cursor-pointer"
+                    className="min-h-[44px] px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 disabled:opacity-45 disabled:cursor-not-allowed inline-flex items-center gap-1.5 whitespace-nowrap transition-colors duration-150 cursor-pointer"
                   >
                     <Icon className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
                     <span className="truncate">{item.label}</span>
@@ -598,7 +598,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
         </section>
 
         {/* Right: Programmatic Multichain Payment (`sendPayment` + `toBaseUnits`) */}
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
           <div className="space-y-1">
             <h2 className="font-display text-lg font-semibold text-slate-900">
               02. Sponsored Multichain Payment (`sendPayment`)
@@ -613,7 +613,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
             {/* Chain Selector */}
             <div className="space-y-1.5">
               <span className="block text-xs font-medium text-slate-700">Target Chain</span>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                 {CHAINS_LIST.map((chain) => {
                   const active = selectedChain === chain;
                   return (
@@ -621,7 +621,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                       key={chain}
                       type="button"
                       onClick={() => setSelectedChain(chain)}
-                      className={`py-2 px-3 text-xs font-semibold rounded-lg border transition-colors duration-150 cursor-pointer ${
+                      className={`min-h-[40px] py-2 px-1.5 sm:px-3 text-xs font-semibold rounded-lg border truncate transition-colors duration-150 cursor-pointer ${
                         active
                           ? 'bg-slate-900 text-white border-slate-900'
                           : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
@@ -637,7 +637,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
             {/* Asset Toggle */}
             <div className="space-y-1.5">
               <span className="block text-xs font-medium text-slate-700">Settlement Asset</span>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2">
                 {(['USDC', 'NATIVE'] as PollarAssetSymbol[]).map((kind) => {
                   const opt = assetOptions.find((a) =>
                     kind === 'NATIVE' ? a.isNative : !a.isNative
@@ -648,7 +648,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                       key={kind}
                       type="button"
                       onClick={() => setAssetKind(kind)}
-                      className={`py-2 px-3 text-xs font-medium rounded-lg border text-left transition-colors duration-150 cursor-pointer ${
+                      className={`min-h-[40px] py-2 px-3 text-xs font-medium rounded-lg border text-left transition-colors duration-150 cursor-pointer ${
                         active
                           ? 'bg-amber-50 text-amber-950 border-amber-400 font-semibold'
                           : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
@@ -749,8 +749,8 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
       </div>
 
       {/* Server API v3 Proxy & Environment Setup */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
           <div className="space-y-1">
             <h2 className="font-display text-lg font-semibold text-slate-900">
               03. Backend Server API v3 Bridge (`/api/pollar/*`)
@@ -772,7 +772,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
               value={externalUserId}
               onChange={(e) => setExternalUserId(e.target.value)}
               placeholder="Firebase UID or app user ID"
-              className="w-full px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+              className="w-full min-h-[44px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
             />
           </label>
 
@@ -781,7 +781,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
               type="button"
               disabled={serverBusy}
               onClick={() => void handleServerProvision()}
-              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg cursor-pointer"
+              className="min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg cursor-pointer"
             >
               {serverBusy ? 'Calling Server API...' : 'Provision User + Wallets'}
             </button>
@@ -789,7 +789,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
               type="button"
               disabled={serverBusy}
               onClick={() => void handleServerFetchWallets()}
-              className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 rounded-lg cursor-pointer"
+              className="min-h-[40px] px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 rounded-lg cursor-pointer"
             >
               Fetch Server Wallets
             </button>
@@ -808,9 +808,9 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
           )}
         </section>
 
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="space-y-1">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1 min-w-0">
               <h2 className="font-display text-lg font-semibold text-slate-900">
                 04. Environment Variables (`.env`)
               </h2>
@@ -823,7 +823,7 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
             <button
               type="button"
               onClick={() => void handleCopy('env-snippet', envSnippet)}
-              className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:border-slate-300 inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+              className="min-h-[36px] px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-lg hover:border-slate-300 inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
             >
               {copiedKey === 'env-snippet' ? (
                 <>

@@ -146,7 +146,7 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <Header activeView={activeView} onNavigate={navigateTo} />
 
-      <main className="flex-1 max-w-[1280px] w-full mx-auto px-6 py-8">
+      <main className="flex-1 max-w-[1280px] w-full mx-auto px-4 sm:px-6 py-5 sm:py-8">
         {authError && (
           <div className="mb-6 p-4 bg-white border border-rose-200 rounded-xl text-sm text-rose-700">
             {authError}
@@ -155,6 +155,7 @@ export default function App() {
 
         {activeRoomId ? (
           <PlayerRoom
+            key={activeRoomId}
             roomId={activeRoomId}
             markets={markets}
             creators={creators}
@@ -164,11 +165,11 @@ export default function App() {
         ) : (
           <>
             {activeView === 'markets' && (
-          <div className="space-y-8">
+          <div className="space-y-6 sm:space-y-8">
             {/* Hero / Overview Header */}
-            <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-200">
+            <section className="flex flex-col md:flex-row md:items-end justify-between gap-5 sm:gap-6 pb-5 sm:pb-6 border-b border-slate-200">
               <div className="space-y-2 max-w-2xl">
-                <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+                <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
                   Shielded prediction markets for Zcash creators
                 </h1>
                 <p className="text-sm text-slate-600 leading-relaxed">
@@ -177,20 +178,20 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-3 gap-6 shrink-0 font-mono tabular-nums">
+              <div className="grid grid-cols-3 gap-3 sm:gap-6 w-full md:w-auto shrink-0 font-mono tabular-nums pt-1 md:pt-0">
                 <div>
-                  <p className="font-sans text-xs text-slate-500">Active Markets</p>
-                  <p className="text-lg font-semibold text-slate-900">{markets.length}</p>
+                  <p className="font-sans text-[11px] sm:text-xs text-slate-500">Active Markets</p>
+                  <p className="text-base sm:text-lg font-semibold text-slate-900">{markets.length}</p>
                 </div>
                 <div>
-                  <p className="font-sans text-xs text-slate-500">Shielded Volume</p>
-                  <p className="text-lg font-semibold text-slate-900">
+                  <p className="font-sans text-[11px] sm:text-xs text-slate-500">Shielded Volume</p>
+                  <p className="text-base sm:text-lg font-semibold text-slate-900">
                     {formatZec(totalVolumeZatoshis, 1)}
                   </p>
                 </div>
                 <div>
-                  <p className="font-sans text-xs text-slate-500">Pool Liquidity</p>
-                  <p className="text-lg font-semibold text-slate-900">
+                  <p className="font-sans text-[11px] sm:text-xs text-slate-500">Pool Liquidity</p>
+                  <p className="text-base sm:text-lg font-semibold text-slate-900">
                     {formatZec(totalLiquidityZatoshis, 1)}
                   </p>
                 </div>
@@ -198,8 +199,8 @@ export default function App() {
             </section>
 
             {/* Filter & Search Toolbar */}
-            <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-200/70 rounded-lg">
+            <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4">
+              <div className="flex flex-nowrap sm:flex-wrap items-center gap-1 p-1 bg-slate-200/70 rounded-lg overflow-x-auto no-scrollbar max-w-full">
                 {CATEGORIES.map((category) => {
                   const isActive = selectedCategory === category;
                   return (
@@ -207,7 +208,7 @@ export default function App() {
                       key={category}
                       type="button"
                       onClick={() => setSelectedCategory(category)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      className={`min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                         isActive
                           ? 'bg-white text-slate-900 shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -231,14 +232,14 @@ export default function App() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Filter questions or creators..."
                     aria-label="Filter markets"
-                    className="w-full min-h-[40px] pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                    className="w-full min-h-[44px] sm:min-h-[40px] pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
                   />
                 </div>
 
                 <button
                   type="button"
                   onClick={() => setScannerOpen(true)}
-                  className="min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
+                  className="min-h-[44px] sm:min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   <QrCode className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
                   <span>Scan ZIP-321</span>
@@ -318,7 +319,60 @@ export default function App() {
               </p>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            {/* Mobile Card List */}
+            <div className="md:hidden bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {creators.map((creator) => (
+                <div key={creator.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-900 truncate">
+                        {creator.displayName}
+                      </div>
+                      <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                        <span>@{creator.handle}</span>
+                        {creator.verified && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="text-emerald-700 font-medium">Verified</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right font-mono tabular-nums shrink-0">
+                      <div className="text-sm font-semibold text-slate-900">
+                        {formatZec(creator.totalVolumeZatoshis, 2)}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {creator.marketsCreatedCount} market{creator.marketsCreatedCount === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg">
+                    <span className="font-mono text-xs text-slate-700 truncate">
+                      {creator.zcashUnifiedAddress}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleCopyAddress(creator.id, creator.zcashUnifiedAddress)
+                      }
+                      aria-label={`Copy unified address for ${creator.displayName}`}
+                      className="min-h-[36px] min-w-[36px] inline-flex items-center justify-center text-slate-500 hover:text-slate-900 shrink-0 cursor-pointer"
+                    >
+                      {copiedAddressId === creator.id ? (
+                        <Check className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block bg-white border border-slate-200 rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -402,41 +456,41 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-200 bg-white">
-        <div className="max-w-[1280px] mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 text-xs text-slate-500">
           <span>Zolymarket — Creator-driven Zcash &amp; Pollar prediction market</span>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <button
               type="button"
               onClick={() => navigateTo('markets')}
-              className="hover:text-slate-900 cursor-pointer"
+              className="py-1 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Markets
             </button>
             <button
               type="button"
               onClick={() => navigateTo('host')}
-              className="hover:text-slate-900 cursor-pointer"
+              className="py-1 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Host Market
             </button>
             <button
               type="button"
               onClick={() => navigateTo('pollar')}
-              className="hover:text-slate-900 cursor-pointer"
+              className="py-1 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Pollar Pay
             </button>
             <button
               type="button"
               onClick={() => navigateTo('schema')}
-              className="hover:text-slate-900 cursor-pointer"
+              className="py-1 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Firestore Schema
             </button>
             <button
               type="button"
               onClick={() => navigateTo('setup')}
-              className="hover:text-slate-900 cursor-pointer"
+              className="py-1 hover:text-slate-900 cursor-pointer whitespace-nowrap"
             >
               Zingo Setup
             </button>

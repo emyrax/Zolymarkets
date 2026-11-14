@@ -549,8 +549,8 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
 
   return (
     <section className="space-y-3 pt-4 border-t border-slate-100">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-0.5">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5 sm:gap-3">
+        <div className="space-y-0.5 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="text-xs font-semibold text-slate-500">
               Probability History ({timeframe})
@@ -575,7 +575,7 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
           <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg">
             {TIMEFRAME_WINDOWS.map((win) => (
               <button
@@ -612,7 +612,7 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
         </p>
       )}
 
-      <div className="border border-slate-200 rounded-lg bg-white p-3">
+      <div className="border border-slate-200 rounded-lg bg-white p-2.5 sm:p-3">
         {loading && chartData.length === 0 ? (
           <div className="h-52 flex items-center justify-center text-xs text-slate-400">
             Loading Firestore probability history...

@@ -9,6 +9,7 @@
  */
 
 import { OutcomeSide } from '../types/database.ts';
+import { generateBatchPayoutUri } from '../../lib/zcash.ts';
 
 export interface Zip321RequestParams {
   address: string;
@@ -268,3 +269,279 @@ export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
   return null;
 }
 
+export interface BatchPayoutRecipient {
+  role: 'creator' | 'winner';
+  address: string;
+  amountZatoshis: number;
+  amountZec: number;
+  memo: string;
+}
+
+export interface BatchZip321Result {
+  uri: string;
+  recipientCount: number;
+  totalZatoshis: number;
+  totalAmountZec: number;
+  recipients: BatchPayoutRecipient[];
+  totalPoolZatoshis: number;
+  creatorFeeZatoshis: number;
+  distributableZatoshis: number;
+  winningStakeZatoshis: number;
+  note: string;
+}
+
+/**
+ * Encodes a multi-recipient Zcash ZIP-321 URI for one-tap batch payout approval in Zashi:
+ * `zcash:?address=<addr0>&amount=<zec0>&memo=<b640>&address.1=<addr1>&amount.1=<zec1>&memo.1=<b641>...`
+ */
+export function buildMultiRecipientZip321Uri(
+  recipients: Array<{ address: string; amountZec: number; memo?: string }>
+): { uri: string; recipientCount: number; totalAmountZec: number } {
+  const valid = recipients.filter(
+    (r) =>
+      isValidShieldedRecipient(r.address) &&
+      r.address.trim().length >= 20 &&
+      Number.isFinite(r.amountZec) &&
+      r.amountZec > 0
+  );
+
+  if (valid.length === 0) {
+    throw new Error('At least one valid shielded recipient with a positive ZEC amount is required.');
+  }
+
+  const totalAmountZec = valid.reduce((sum, recipient) => sum + recipient.amountZec, 0);
+  const uri = generateBatchPayoutUri(
+    valid.map((recipient) => ({
+      address: recipient.address,
+      amount: recipient.amountZec,
+      memo: recipient.memo,
+    }))
+  );
+
+  return {
+    uri,
+    recipientCount: valid.length,
+    totalAmountZec: Number(totalAmountZec.toFixed(8)),
+  };
+}
+
+/**
+ * Computes the creator fee + proportional winning bettor payout split from verified
+ * market bets and encodes a single Zashi-compatible multi-recipient ZIP-321 QR URI.
+ */
+export function computeMarketBatchPayouts(params: {
+  marketId: string;
+  creatorAddress: string;
+  creatorFeeBps: number;
+  winningOutcome: OutcomeSide;
+  bets: Array<{
+    pick: OutcomeSide;
+    payoutTo: string;
+    amountZatoshis: number;
+  }>;
+}): BatchZip321Result {
+  const { marketId, creatorAddress, creatorFeeBps, winningOutcome, bets } = params;
+  const totalPoolZatoshis = bets.reduce((sum, b) => sum + Math.max(0, b.amountZatoshis), 0);
+
+  if (totalPoolZatoshis === 0) {
+    return {
+      uri: '',
+      recipientCount: 0,
+      totalZatoshis: 0,
+      totalAmountZec: 0,
+      recipients: [],
+      totalPoolZatoshis: 0,
+      creatorFeeZatoshis: 0,
+      distributableZatoshis: 0,
+      winningStakeZatoshis: 0,
+      note: 'No verified bets were recorded in this market pool.',
+    };
+  }
+
+  const creatorFeeZatoshis = Math.round((totalPoolZatoshis * creatorFeeBps) / 10_000);
+  const distributableZatoshis = Math.max(0, totalPoolZatoshis - creatorFeeZatoshis);
+  const winningBets = bets.filter((b) => b.pick === winningOutcome && b.amountZatoshis > 0);
+  const winningStakeZatoshis = winningBets.reduce((sum, b) => sum + b.amountZatoshis, 0);
+
+  const recipients: BatchPayoutRecipient[] = [];
+  const trimmedCreatorAddr = creatorAddress.trim();
+
+  if (creatorFeeZatoshis > 0 && isValidShieldedRecipient(trimmedCreatorAddr)) {
+    recipients.push({
+      role: 'creator',
+      address: trimmedCreatorAddr,
+      amountZatoshis: creatorFeeZatoshis,
+      amountZec: Number((creatorFeeZatoshis / 100_000_000).toFixed(8)),
+      memo: `Zolymarket creator fee (${marketId})`,
+    });
+  }
+
+  // Group winning payouts by player return address so repeat bettors receive one clean output
+  const winnerTotalsByAddress = new Map<string, number>();
+  for (const bet of winningBets) {
+    const addr = bet.payoutTo.trim();
+    if (!isValidShieldedRecipient(addr)) continue;
+    winnerTotalsByAddress.set(addr, (winnerTotalsByAddress.get(addr) ?? 0) + bet.amountZatoshis);
+  }
+
+  if (winningStakeZatoshis > 0 && distributableZatoshis > 0) {
+    for (const [address, stakedZatoshis] of winnerTotalsByAddress.entries()) {
+      const shareZatoshis = Math.floor(
+        (distributableZatoshis * stakedZatoshis) / winningStakeZatoshis
+      );
+      if (shareZatoshis > 0) {
+        recipients.push({
+          role: 'winner',
+          address,
+          amountZatoshis: shareZatoshis,
+          amountZec: Number((shareZatoshis / 100_000_000).toFixed(8)),
+          memo: `Zolymarket ${winningOutcome} payout (${marketId})`,
+        });
+      }
+    }
+  }
+
+  if (recipients.length === 0) {
+    return {
+      uri: '',
+      recipientCount: 0,
+      totalZatoshis: 0,
+      totalAmountZec: 0,
+      recipients: [],
+      totalPoolZatoshis,
+      creatorFeeZatoshis,
+      distributableZatoshis,
+      winningStakeZatoshis,
+      note: 'No valid recipient addresses available for batch payout.',
+    };
+  }
+
+  const built = buildMultiRecipientZip321Uri(recipients);
+  const totalZatoshis = recipients.reduce((sum, r) => sum + r.amountZatoshis, 0);
+
+  const note =
+    winningBets.length === 0
+      ? `No ${winningOutcome} bets were placed; creator fee output ready for one-tap Zashi approval.`
+      : `Batch payout ready: ${recipients.length} output${recipients.length === 1 ? '' : 's'} totaling ${built.totalAmountZec} ZEC.`;
+
+  return {
+    uri: built.uri,
+    recipientCount: built.recipientCount,
+    totalZatoshis,
+    totalAmountZec: built.totalAmountZec,
+    recipients,
+    totalPoolZatoshis,
+    creatorFeeZatoshis,
+    distributableZatoshis,
+    winningStakeZatoshis,
+    note,
+  };
+}
+
+/**
+ * Encodes UTF-8 string into lowercase hex (compatible with `rawMemoHex` storage).
+ */
+export function utf8ToHex(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    out += bytes[i].toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
+/**
+ * Decodes a Zashi decrypted memo (JSON, Base64URL, hex, or ZIP-321 URI)
+ * so the Host Console can extract `{ marketId, pick, payoutTo }` without a VPS.
+ */
+export function decodeZashiMemoInput(rawInput: string): {
+  marketId?: string;
+  pick?: OutcomeSide;
+  payoutTo?: string;
+  amountZec?: number;
+  rawText: string;
+} | null {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return null;
+
+  // 1. ZIP-321 URI directly pasted
+  if (/^zcash:/i.test(trimmed)) {
+    const parsedUri = parseZip321Input(trimmed);
+    if (parsedUri) {
+      return {
+        marketId: parsedUri.marketId,
+        pick: parsedUri.pick,
+        payoutTo: parsedUri.returnAddr,
+        amountZec: parsedUri.amountZec,
+        rawText: parsedUri.memoDecoded || trimmed,
+      };
+    }
+  }
+
+  let candidateText = trimmed;
+
+  // 2. Hex-encoded Zcash memo (e.g. 7b2271223a...)
+  if (/^[0-9a-fA-F]{12,}$/.test(trimmed) && trimmed.length % 2 === 0) {
+    try {
+      const bytes = new Uint8Array(trimmed.length / 2);
+      for (let i = 0; i < trimmed.length; i += 2) {
+        bytes[i / 2] = Number.parseInt(trimmed.slice(i, i + 2), 16);
+      }
+      const decodedHex = new TextDecoder().decode(bytes).replace(/\0+$/g, '').trim();
+      if (decodedHex.startsWith('{') || decodedHex.startsWith('zolymarket:')) {
+        candidateText = decodedHex;
+      }
+    } catch {
+      // Continue with non-hex parsing
+    }
+  } else if (!trimmed.startsWith('{') && !trimmed.startsWith('zolymarket:')) {
+    // 3. Unpadded Base64URL memo
+    try {
+      const decodedB64 = decodeBase64Url(trimmed).trim();
+      if (decodedB64.startsWith('{') || decodedB64.startsWith('zolymarket:')) {
+        candidateText = decodedB64;
+      }
+    } catch {
+      // Ignore invalid base64
+    }
+  }
+
+  if (candidateText.startsWith('{')) {
+    try {
+      const obj = JSON.parse(candidateText) as {
+        q?: unknown;
+        pick?: unknown;
+        payout_to?: unknown;
+      };
+      return {
+        marketId: typeof obj.q === 'string' ? obj.q.trim() : undefined,
+        pick:
+          obj.pick === OutcomeSide.Yes
+            ? OutcomeSide.Yes
+            : obj.pick === OutcomeSide.No
+            ? OutcomeSide.No
+            : undefined,
+        payoutTo: typeof obj.payout_to === 'string' ? obj.payout_to.trim() : undefined,
+        rawText: candidateText,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  if (candidateText.startsWith('zolymarket:v1|')) {
+    let marketId: string | undefined;
+    let pick: OutcomeSide | undefined;
+    for (const part of candidateText.split('|')) {
+      if (part.startsWith('m=')) marketId = part.slice(2).trim();
+      if (part.startsWith('s=')) {
+        const sVal = part.slice(2).trim().toUpperCase();
+        if (sVal === OutcomeSide.Yes) pick = OutcomeSide.Yes;
+        if (sVal === OutcomeSide.No) pick = OutcomeSide.No;
+      }
+    }
+    return { marketId, pick, rawText: candidateText };
+  }
+
+  return null;
+}

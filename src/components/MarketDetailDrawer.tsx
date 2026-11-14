@@ -94,14 +94,14 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
             aria-label="Market details"
             className="relative z-10 w-full max-w-xl bg-white h-full border-l border-slate-200 overflow-y-auto flex flex-col"
           >
-            <div className="px-6 py-5 border-b border-slate-200 flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200 flex items-start justify-between gap-3 sm:gap-4">
+              <div className="space-y-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
                   <span className="font-medium text-slate-700">{market.category}</span>
                   <span aria-hidden="true">·</span>
-                  <span>Created by {market.creator.displayName}</span>
+                  <span className="truncate">Created by {market.creator.displayName}</span>
                 </div>
-                <h2 className="font-display text-lg font-semibold text-slate-900 leading-snug">
+                <h2 className="font-display text-base sm:text-lg font-semibold text-slate-900 leading-snug">
                   {market.question}
                 </h2>
               </div>
@@ -109,13 +109,13 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                 type="button"
                 onClick={onClose}
                 aria-label="Close market drawer"
-                className="p-2 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-6 flex-1">
+            <div className="p-4 sm:p-6 space-y-5 sm:space-y-6 flex-1">
               {/* Lock Period Countdown */}
               <MarketCountdown market={market} variant="drawer" />
 
@@ -124,8 +124,8 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                 <h3 className="text-xs font-semibold text-slate-500">
                   CPMM Reserve State
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50">
+                <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 sm:gap-4">
+                  <div className="p-3.5 sm:p-4 border border-slate-200 rounded-lg bg-slate-50/50">
                     <div className="flex items-center justify-between text-xs text-slate-600">
                       <span className="font-semibold text-emerald-700">YES Pool</span>
                       <span className="font-mono tabular-nums">{market.yesProbability.toFixed(1)}%</span>
@@ -134,7 +134,7 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                       {formatZec(market.outcomes.yes.poolZatoshis, 2)}
                     </p>
                   </div>
-                  <div className="p-4 border border-slate-200 rounded-lg bg-slate-50/50">
+                  <div className="p-3.5 sm:p-4 border border-slate-200 rounded-lg bg-slate-50/50">
                     <div className="flex items-center justify-between text-xs text-slate-600">
                       <span className="font-semibold text-rose-700">NO Pool</span>
                       <span className="font-mono tabular-nums">{market.noProbability.toFixed(1)}%</span>
@@ -164,7 +164,7 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
 
               {/* Phase 1 ZIP-321 URI & Quote Preview */}
               <section className="space-y-3 pt-4 border-t border-slate-100">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-xs font-semibold text-slate-500">
                     ZIP-321 Request Preview
                   </h3>
@@ -172,7 +172,7 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                     <button
                       type="button"
                       onClick={() => onOpenRoom(market.id)}
-                      className="text-xs font-semibold text-amber-700 hover:text-amber-800 cursor-pointer"
+                      className="min-h-[36px] text-xs font-semibold text-amber-700 hover:text-amber-800 cursor-pointer whitespace-nowrap"
                     >
                       Open Betting Room →
                     </button>

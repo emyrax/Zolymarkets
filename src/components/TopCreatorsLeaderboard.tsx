@@ -67,7 +67,7 @@ export const TopCreatorsLeaderboard: React.FC<TopCreatorsLeaderboardProps> = ({
 
   return (
     <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-      <div className="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+      <div className="px-4 sm:px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
             <Trophy className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
@@ -83,12 +83,12 @@ export const TopCreatorsLeaderboard: React.FC<TopCreatorsLeaderboardProps> = ({
         <div
           role="group"
           aria-label="Sort leaderboard by"
-          className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg"
+          className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg max-w-full overflow-x-auto no-scrollbar"
         >
           <button
             type="button"
             onClick={() => setSortBy('volume')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap cursor-pointer ${
+            className={`min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap cursor-pointer ${
               sortBy === 'volume'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -99,7 +99,7 @@ export const TopCreatorsLeaderboard: React.FC<TopCreatorsLeaderboardProps> = ({
           <button
             type="button"
             onClick={() => setSortBy('resolved')}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap cursor-pointer ${
+            className={`min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap cursor-pointer ${
               sortBy === 'resolved'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
@@ -111,39 +111,31 @@ export const TopCreatorsLeaderboard: React.FC<TopCreatorsLeaderboardProps> = ({
       </div>
 
       {rankedCreators.length === 0 ? (
-        <div className="p-8 text-center text-xs text-slate-500">
+        <div className="p-6 sm:p-8 text-center text-xs text-slate-500">
           No creators indexed in Cloud Firestore yet. Launch a market above to appear on the
           leaderboard.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
-                <th className="py-3 px-6 w-16">Rank</th>
-                <th className="py-3 px-4">Creator</th>
-                <th className="py-3 px-4 text-right">Markets Resolved</th>
-                <th className="py-3 px-4 text-right">Total Markets</th>
-                <th className="py-3 px-6 text-right">Total Volume</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
-              {rankedCreators.map((row, index) => {
-                const rank = index + 1;
-                return (
-                  <tr key={row.creator.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td
-                      className={`py-3.5 px-6 font-mono tabular-nums font-semibold ${
+        <>
+          {/* Mobile Stacked Leaderboard */}
+          <div className="md:hidden divide-y divide-slate-100">
+            {rankedCreators.map((row, index) => {
+              const rank = index + 1;
+              return (
+                <div key={row.creator.id} className="p-4 flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <span
+                      className={`font-mono tabular-nums text-sm font-semibold shrink-0 ${
                         rank === 1 ? 'text-amber-700' : 'text-slate-500'
                       }`}
                     >
                       #{rank}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <div className="font-medium text-slate-900">
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm text-slate-900 truncate">
                         {row.creator.displayName}
-                      </div>
-                      <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                      </p>
+                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-1.5">
                         <span>@{row.creator.handle}</span>
                         {row.creator.verified && (
                           <>
@@ -152,22 +144,76 @@ export const TopCreatorsLeaderboard: React.FC<TopCreatorsLeaderboardProps> = ({
                           </>
                         )}
                       </div>
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold text-slate-900">
-                      {row.resolvedCount}
-                    </td>
-                    <td className="py-3.5 px-4 text-right font-mono tabular-nums text-slate-600">
-                      {row.totalMarketsCount}
-                    </td>
-                    <td className="py-3.5 px-6 text-right font-mono tabular-nums font-semibold text-slate-900">
+                    </div>
+                  </div>
+
+                  <div className="text-right font-mono tabular-nums shrink-0">
+                    <p className="text-sm font-semibold text-slate-900">
                       {formatZec(row.totalVolumeZatoshis, 2)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {row.resolvedCount}/{row.totalMarketsCount} resolved
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop Table */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
+                  <th className="py-3 px-6 w-16">Rank</th>
+                  <th className="py-3 px-4">Creator</th>
+                  <th className="py-3 px-4 text-right">Markets Resolved</th>
+                  <th className="py-3 px-4 text-right">Total Markets</th>
+                  <th className="py-3 px-6 text-right">Total Volume</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {rankedCreators.map((row, index) => {
+                  const rank = index + 1;
+                  return (
+                    <tr key={row.creator.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td
+                        className={`py-3.5 px-6 font-mono tabular-nums font-semibold ${
+                          rank === 1 ? 'text-amber-700' : 'text-slate-500'
+                        }`}
+                      >
+                        #{rank}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-medium text-slate-900">
+                          {row.creator.displayName}
+                        </div>
+                        <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                          <span>@{row.creator.handle}</span>
+                          {row.creator.verified && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-emerald-700 font-medium">Verified</span>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold text-slate-900">
+                        {row.resolvedCount}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-slate-600">
+                        {row.totalMarketsCount}
+                      </td>
+                      <td className="py-3.5 px-6 text-right font-mono tabular-nums font-semibold text-slate-900">
+                        {formatZec(row.totalVolumeZatoshis, 2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   );

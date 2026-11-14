@@ -509,18 +509,18 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-[2px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="zip321-scanner-title"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
+        className="w-full max-w-lg max-h-[92dvh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-200 flex items-center justify-between gap-3 sm:gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
             <QrCode className="w-5 h-5 text-amber-700 shrink-0" aria-hidden="true" />
             <div className="min-w-0">
@@ -547,7 +547,7 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
         </div>
 
         {/* Camera / Upload Scanner Viewport */}
-        <div className="p-5 space-y-5">
+        <div className="p-4 sm:p-5 space-y-4 sm:space-y-5">
           <div
             className="relative aspect-[4/3] w-full bg-slate-950 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center"
             onDragOver={(e) => e.preventDefault()}
@@ -718,7 +718,7 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
             >
               Or paste ZIP-321 URI / Shielded Address (`zcash:u1...` or `u1...`)
             </label>
-            <div className="flex items-stretch gap-2">
+            <div className="flex flex-col min-[380px]:flex-row items-stretch gap-2">
               <input
                 id="zip321-manual-input"
                 type="text"

@@ -210,6 +210,55 @@ async function startServer() {
     }
   });
 
+  app.post('/api/markets/:id/bets', (req, res) => {
+    try {
+      const marketId = req.params.id;
+      const body = req.body as {
+        txid?: string;
+        poolType?: 'orchard' | 'sapling';
+        recipientAddress?: string;
+        pick?: OutcomeSide;
+        payoutTo?: string;
+        amountZatoshis?: number;
+        rawMemoHex?: string;
+        confirmations?: number;
+      };
+
+      if (
+        !body.txid ||
+        !body.recipientAddress ||
+        (body.pick !== OutcomeSide.Yes && body.pick !== OutcomeSide.No) ||
+        !body.payoutTo ||
+        typeof body.amountZatoshis !== 'number' ||
+        body.amountZatoshis <= 0
+      ) {
+        return res.status(400).json({ error: 'Missing required verified bet fields.' });
+      }
+
+      const result = store.insertShieldedBetIfNew({
+        marketId,
+        txid: body.txid,
+        poolType: body.poolType === 'sapling' ? 'sapling' : 'orchard',
+        recipientAddress: body.recipientAddress,
+        pick: body.pick,
+        payoutTo: body.payoutTo,
+        amountZatoshis: Math.round(body.amountZatoshis),
+        rawMemoHex: body.rawMemoHex || '',
+        decodedMemoJson: {
+          q: marketId,
+          pick: body.pick,
+          payout_to: body.payoutTo,
+        },
+        confirmations: typeof body.confirmations === 'number' ? body.confirmations : 1,
+      });
+
+      return res.status(result.inserted ? 201 : 200).json(result);
+    } catch (error) {
+      console.error('Error recording host-verified bet:', error);
+      return res.status(500).json({ error: 'Failed to record verified bet.' });
+    }
+  });
+
   app.get('/api/schema', (_req, res) => {
     try {
       const rulesPath = path.resolve(process.cwd(), 'firestore.rules');

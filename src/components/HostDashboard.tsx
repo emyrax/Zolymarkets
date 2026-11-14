@@ -6,7 +6,7 @@
  * outcomes via a YES/NO modal.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   AlertTriangle,
@@ -15,21 +15,35 @@ import {
   CheckCircle2,
   Copy,
   ExternalLink,
+  KeyRound,
   Lock,
   Plus,
+  QrCode,
+  ShieldCheck,
   Trophy,
   X,
 } from 'lucide-react';
 import {
+  Timestamp,
+  collection,
   doc,
   getDoc,
+  onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
+  writeBatch,
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext.tsx';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase.ts';
-import { formatZec, zecToZatoshis } from '../lib/cpmm.ts';
+import { estimateSharesOut, formatZec, zatoshisToZec, zecToZatoshis } from '../lib/cpmm.ts';
+import {
+  computeMarketBatchPayouts,
+  decodeZashiMemoInput,
+  utf8ToHex,
+} from '../lib/zip321.ts';
 import { TopCreatorsLeaderboard } from './TopCreatorsLeaderboard.tsx';
 import {
   Creator,
@@ -37,6 +51,7 @@ import {
   MarketStatus,
   MarketWithDetails,
   OutcomeSide,
+  ShieldedBet,
 } from '../types/database.ts';
 
 interface HostDashboardProps {
@@ -75,6 +90,30 @@ const CATEGORIES: MarketCategory[] = [
 ];
 
 const ZCASH_ADDRESS_REGEX = /^(u1|uregtest1|utest1|zs1)[0-9a-zA-Z]{16,252}$/;
+const HEX_TXID_REGEX = /^[0-9a-fA-F]{16,128}$/;
+const UFVK_STORAGE_PREFIX = 'zolymarket_host_ufvk_v1_';
+
+function toIsoString(val: unknown): string {
+  if (val instanceof Timestamp) {
+    return val.toDate().toISOString();
+  }
+  if (typeof val === 'string') {
+    return val;
+  }
+  return new Date().toISOString();
+}
+
+function generateSampleHexTxid(): string {
+  const bytes = new Uint8Array(32);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 function slugifyQuestion(question: string, suffix: string): string {
   const base = question
@@ -112,6 +151,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   const [durationValue, setDurationValue] = useState<number>(24);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('hours');
   const [payoutAddress, setPayoutAddress] = useState<string>('');
+  const [poolAddressMode, setPoolAddressMode] = useState<'zashi' | 'zingo'>('zashi');
+  const [customPoolAddress, setCustomPoolAddress] = useState<string>('');
+  const [createUfvk, setCreateUfvk] = useState<string>('');
   const [category, setCategory] = useState<MarketCategory>(MarketCategory.CreatorBets);
   const [creating, setCreating] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -119,7 +161,18 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   // Active Screen state
   const [activeMarketId, setActiveMarketId] = useState<string | null>(null);
   const [localActiveSnapshot, setLocalActiveSnapshot] = useState<MarketWithDetails | null>(null);
-  const [walletProvisionSource, setWalletProvisionSource] = useState<'zingo-cli' | 'preview' | null>(null);
+  const [walletProvisionSource, setWalletProvisionSource] = useState<'zashi' | 'zingo-cli' | 'preview' | null>(null);
+
+  // Self-Custodial Hybrid Bet Verification state (No VPS)
+  const [marketBets, setMarketBets] = useState<ShieldedBet[]>([]);
+  const [rawZashiMemoInput, setRawZashiMemoInput] = useState<string>('');
+  const [memoDecodeNote, setMemoDecodeNote] = useState<string | null>(null);
+  const [verifyTxid, setVerifyTxid] = useState<string>('');
+  const [verifyPick, setVerifyPick] = useState<OutcomeSide>(OutcomeSide.Yes);
+  const [verifyAmountInput, setVerifyAmountInput] = useState<string>('0.5');
+  const [verifyPayoutTo, setVerifyPayoutTo] = useState<string>('');
+  const [verifyingBet, setVerifyingBet] = useState<boolean>(false);
+  const [activeUfvk, setActiveUfvk] = useState<string>('');
 
   // Action & modal states
   const [locking, setLocking] = useState<boolean>(false);
@@ -153,6 +206,122 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
     return creators.find((c) => c.id === expectedId) ?? null;
   }, [creators, user]);
 
+  // Subscribe to real-time `shielded_bets` for activeMarket + load browser-only UFVK
+  useEffect(() => {
+    if (!activeMarket?.id) {
+      setMarketBets([]);
+      setActiveUfvk('');
+      return;
+    }
+
+    try {
+      setActiveUfvk(localStorage.getItem(`${UFVK_STORAGE_PREFIX}${activeMarket.id}`) || '');
+    } catch {
+      setActiveUfvk('');
+    }
+
+    let active = true;
+    fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { bets?: ShieldedBet[] } | null) => {
+        if (active && data?.bets && data.bets.length > 0) {
+          setMarketBets((prev) => (prev.length === 0 ? data.bets! : prev));
+        }
+      })
+      .catch(() => {
+        // Ignore API fallback error
+      });
+
+    const betsQuery = query(
+      collection(db, 'shielded_bets'),
+      where('marketId', '==', activeMarket.id)
+    );
+
+    const unsubBets = onSnapshot(
+      betsQuery,
+      (snapshot) => {
+        if (!active) return;
+        const rows: ShieldedBet[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          const pick = d.pick === OutcomeSide.No ? OutcomeSide.No : OutcomeSide.Yes;
+          return {
+            id: String(d.id || docSnap.id),
+            marketId: String(d.marketId || activeMarket.id),
+            txid: String(d.txid || ''),
+            poolType: d.poolType === 'sapling' ? 'sapling' : 'orchard',
+            recipientAddress: String(d.recipientAddress || ''),
+            pick,
+            payoutTo: String(d.payoutTo || ''),
+            amountZatoshis: Number(d.amountZatoshis || 0),
+            rawMemoHex: String(d.rawMemoHex || ''),
+            decodedMemoJson: (d.decodedMemo as ShieldedBet['decodedMemoJson']) ?? {
+              q: activeMarket.id,
+              pick,
+              payout_to: String(d.payoutTo || ''),
+            },
+            confirmations: Number(d.confirmations || 0),
+            createdAt: toIsoString(d.createdAt),
+          };
+        });
+        rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        setMarketBets(rows);
+      },
+      (err) => {
+        if (!active) return;
+        try {
+          handleFirestoreError(err, OperationType.LIST, 'shielded_bets');
+        } catch {
+          // Non-fatal fallback
+        }
+      }
+    );
+
+    return () => {
+      active = false;
+      unsubBets();
+    };
+  }, [activeMarket?.id]);
+
+  // Persist optional read-only UFVK strictly inside browser localStorage (never sent to server)
+  const handleSaveLocalUfvk = (val: string) => {
+    setActiveUfvk(val);
+    if (!activeMarket?.id) return;
+    try {
+      if (val.trim()) {
+        localStorage.setItem(`${UFVK_STORAGE_PREFIX}${activeMarket.id}`, val.trim());
+      } else {
+        localStorage.removeItem(`${UFVK_STORAGE_PREFIX}${activeMarket.id}`);
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
+
+  // Compute ZIP-321 multi-recipient batch payout split for modal preview & resolved console
+  const resolvedBatchPayout = useMemo(() => {
+    if (!activeMarket || activeMarket.status !== MarketStatus.Resolved || !activeMarket.winningOutcome) {
+      return null;
+    }
+    return computeMarketBatchPayouts({
+      marketId: activeMarket.id,
+      creatorAddress: activeMarket.creator.zcashUnifiedAddress || activeMarket.shieldedPoolAddress,
+      creatorFeeBps: activeMarket.creatorFeeBps,
+      winningOutcome: activeMarket.winningOutcome,
+      bets: marketBets,
+    });
+  }, [activeMarket, marketBets]);
+
+  const modalPreviewBatchPayout = useMemo(() => {
+    if (!activeMarket) return null;
+    return computeMarketBatchPayouts({
+      marketId: activeMarket.id,
+      creatorAddress: activeMarket.creator.zcashUnifiedAddress || activeMarket.shieldedPoolAddress,
+      creatorFeeBps: activeMarket.creatorFeeBps,
+      winningOutcome: selectedWinner,
+      bets: marketBets,
+    });
+  }, [activeMarket, selectedWinner, marketBets]);
+
   const totalDurationSeconds = useMemo(() => {
     const safeVal = Number.isFinite(durationValue) && durationValue > 0 ? durationValue : 0;
     return Math.round(safeVal * UNIT_MULTIPLIER_SECONDS[durationUnit]);
@@ -179,6 +348,170 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       return;
     }
     setPayoutAddress('u1hostpayout9x8c7v6b5n4m3l2k1j0h9g8f7d6s5a4p3o2i1u2y3t4r5e6w7q8');
+  };
+
+  const handleDecodeZashiMemo = (raw: string) => {
+    setRawZashiMemoInput(raw);
+    setMemoDecodeNote(null);
+    if (!raw.trim()) return;
+
+    const decoded = decodeZashiMemoInput(raw);
+    if (!decoded) {
+      setMemoDecodeNote('Could not parse JSON, Base64URL, hex, or ZIP-321 memo format.');
+      return;
+    }
+
+    if (decoded.pick) setVerifyPick(decoded.pick);
+    if (decoded.payoutTo) setVerifyPayoutTo(decoded.payoutTo);
+    if (decoded.amountZec && decoded.amountZec > 0) {
+      setVerifyAmountInput(String(decoded.amountZec));
+    }
+
+    if (decoded.marketId && activeMarket && decoded.marketId !== activeMarket.id) {
+      setMemoDecodeNote(
+        `Decoded memo targets market "${decoded.marketId}" (active market is "${activeMarket.id}"). Verify before recording.`
+      );
+    } else {
+      setMemoDecodeNote(
+        `Decoded memo: ${decoded.pick ?? 'unknown side'} -> payout to ${decoded.payoutTo ? `${decoded.payoutTo.slice(0, 14)}...` : 'missing address'}.`
+      );
+    }
+  };
+
+  const handleVerifyZashiBet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeMarket || !user) return;
+
+    setActionError(null);
+    setActionSuccess(null);
+
+    const cleanTxid = verifyTxid.trim().replace(/^0x/i, '');
+    const cleanPayoutTo = verifyPayoutTo.trim();
+    const parsedAmt = Number.parseFloat(verifyAmountInput);
+
+    if (!HEX_TXID_REGEX.test(cleanTxid)) {
+      setActionError('Enter a valid hex Zcash Transaction ID (16–128 hex characters).');
+      return;
+    }
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
+      setActionError('Enter a positive ZEC bet amount.');
+      return;
+    }
+    if (!ZCASH_ADDRESS_REGEX.test(cleanPayoutTo)) {
+      setActionError('Enter the player\'s valid shielded return address (u1..., utest1..., or zs1...).');
+      return;
+    }
+    if (marketBets.some((b) => b.txid.toLowerCase() === cleanTxid.toLowerCase())) {
+      setActionError('This txid is already recorded in shielded_bets for this market.');
+      return;
+    }
+
+    const amountZatoshis = zecToZatoshis(parsedAmt);
+    if (amountZatoshis <= 0) {
+      setActionError('Amount must be at least 1 zatoshi (0.00000001 ZEC).');
+      return;
+    }
+
+    setVerifyingBet(true);
+    try {
+      const betId = `bet_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const yesPool = Math.max(1, activeMarket.outcomes.yes.poolZatoshis);
+      const noPool = Math.max(1, activeMarket.outcomes.no.poolZatoshis);
+      const isYes = verifyPick === OutcomeSide.Yes;
+      const targetPool = isYes ? yesPool : noPool;
+      const oppositePool = isYes ? noPool : yesPool;
+
+      const quote = estimateSharesOut({
+        amountZatoshis,
+        targetPoolZatoshis: targetPool,
+        oppositePoolZatoshis: oppositePool,
+        creatorFeeBps: activeMarket.creatorFeeBps,
+      });
+
+      const k = targetPool * oppositePool;
+      const nextOppositePool = oppositePool + quote.netDepositZatoshis;
+      const nextTargetPool = Math.max(1, Math.round(k / nextOppositePool));
+
+      const nextYesPool = isYes ? nextTargetPool : nextOppositePool;
+      const nextNoPool = isYes ? nextOppositePool : nextTargetPool;
+      const nextYesShares = isYes
+        ? Math.round((activeMarket.outcomes.yes.sharesOutstanding + quote.sharesOut) * 10_000) / 10_000
+        : activeMarket.outcomes.yes.sharesOutstanding;
+      const nextNoShares = !isYes
+        ? Math.round((activeMarket.outcomes.no.sharesOutstanding + quote.sharesOut) * 10_000) / 10_000
+        : activeMarket.outcomes.no.sharesOutstanding;
+
+      const memoObj = {
+        q: activeMarket.id,
+        pick: verifyPick,
+        payout_to: cleanPayoutTo,
+      };
+      const rawMemoHex = utf8ToHex(JSON.stringify(memoObj)).slice(0, 1024);
+
+      const batch = writeBatch(db);
+      const betRef = doc(db, 'shielded_bets', betId);
+      const marketRef = doc(db, 'markets', activeMarket.id);
+
+      batch.set(betRef, {
+        id: betId,
+        marketId: activeMarket.id,
+        txid: cleanTxid,
+        poolType: 'orchard',
+        recipientAddress: activeMarket.shieldedPoolAddress,
+        pick: verifyPick,
+        payoutTo: cleanPayoutTo,
+        amountZatoshis,
+        rawMemoHex,
+        decodedMemo: memoObj,
+        confirmations: 1,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.update(marketRef, {
+        yesPoolZatoshis: nextYesPool,
+        noPoolZatoshis: nextNoPool,
+        yesSharesOutstanding: nextYesShares,
+        noSharesOutstanding: nextNoShares,
+        totalVolumeZatoshis: activeMarket.totalVolumeZatoshis + amountZatoshis,
+        liquidityZatoshis: nextYesPool + nextNoPool,
+        updatedAt: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `markets/${activeMarket.id}/shielded_bets`);
+      }
+
+      // Mirror to Express store for offline/API clients
+      void fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/bets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txid: cleanTxid,
+          poolType: 'orchard',
+          recipientAddress: activeMarket.shieldedPoolAddress,
+          pick: verifyPick,
+          payoutTo: cleanPayoutTo,
+          amountZatoshis,
+          rawMemoHex,
+          confirmations: 1,
+        }),
+      }).then(() => onRefresh?.());
+
+      setVerifyTxid('');
+      setRawZashiMemoInput('');
+      setMemoDecodeNote(null);
+      setActionSuccess(
+        `Verified & locked ${parsedAmt.toFixed(4)} ZEC bet on ${verifyPick} in Firestore. Sentiment chart and Player Room notified.`
+      );
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Unable to verify bet in Cloud Firestore.'
+      );
+    } finally {
+      setVerifyingBet(false);
+    }
   };
 
   const handleCreateMarket = async (e: React.FormEvent) => {
@@ -247,30 +580,54 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
         handleFirestoreError(err, OperationType.WRITE, `creators/${creatorId}`);
       }
 
-      // Step 2: Provision shielded pool address via zingo-cli when available, with graceful fallback
+      // Step 2: Determine Shielded Pool Address (Self-Custodial Zashi default or optional zingo-cli)
       const shortSuffix = Math.random().toString(36).slice(2, 8);
       const marketId = `mkt_${Date.now().toString(36)}_${shortSuffix}`;
       const slug = slugifyQuestion(cleanQuestion, shortSuffix);
       const closesAtIso = new Date(Date.now() + safeSeconds * 1000).toISOString();
 
       let shieldedPoolAddress = '';
-      let source: 'zingo-cli' | 'preview' = 'preview';
-      try {
-        const walletRes = await fetch('/api/zcash/wallet', { method: 'POST' });
-        if (walletRes.ok) {
-          const walletJson = (await walletRes.json()) as { address?: string };
-          if (walletJson.address && ZCASH_ADDRESS_REGEX.test(walletJson.address)) {
-            shieldedPoolAddress = walletJson.address;
-            source = 'zingo-cli';
-          }
+      let source: 'zashi' | 'zingo-cli' | 'preview' = 'zashi';
+
+      if (poolAddressMode === 'zashi') {
+        const cleanPool = customPoolAddress.trim() || cleanAddress;
+        if (!ZCASH_ADDRESS_REGEX.test(cleanPool)) {
+          setFormError(
+            'Enter a valid Zashi Unified Address (u1... or utest1...) for the market shielded pool.'
+          );
+          setCreating(false);
+          return;
         }
-      } catch {
-        // Preview environment without local zingo-cli falls back below
+        shieldedPoolAddress = cleanPool;
+        source = 'zashi';
+      } else {
+        source = 'preview';
+        try {
+          const walletRes = await fetch('/api/zcash/wallet', { method: 'POST' });
+          if (walletRes.ok) {
+            const walletJson = (await walletRes.json()) as { address?: string };
+            if (walletJson.address && ZCASH_ADDRESS_REGEX.test(walletJson.address)) {
+              shieldedPoolAddress = walletJson.address;
+              source = 'zingo-cli';
+            }
+          }
+        } catch {
+          // Preview environment without local zingo-cli falls back below
+        }
+
+        if (!shieldedPoolAddress) {
+          const fallbackPrefix = cleanAddress.startsWith('utest1') ? 'utest1' : 'u1';
+          shieldedPoolAddress = buildFallbackPoolAddress(marketId, fallbackPrefix);
+        }
       }
 
-      if (!shieldedPoolAddress) {
-        const fallbackPrefix = cleanAddress.startsWith('utest1') ? 'utest1' : 'u1';
-        shieldedPoolAddress = buildFallbackPoolAddress(marketId, fallbackPrefix);
+      // Persist optional read-only UFVK strictly in browser localStorage (never touches server)
+      if (createUfvk.trim()) {
+        try {
+          localStorage.setItem(`${UFVK_STORAGE_PREFIX}${marketId}`, createUfvk.trim());
+        } catch {
+          // Ignore storage errors
+        }
       }
 
       const initialSidePool = zecToZatoshis(5.0);
@@ -392,10 +749,14 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       setActiveMarketId(marketId);
       setWalletProvisionSource(source);
       setQuestion('');
+      setCustomPoolAddress('');
+      setCreateUfvk('');
       setActionSuccess(
-        source === 'zingo-cli'
+        source === 'zashi'
+          ? 'Market created with your self-custodial Zashi pool address (zero VPS required).'
+          : source === 'zingo-cli'
           ? 'Market created and shielded pool address provisioned via zingo-cli.'
-          : 'Market created in Cloud Firestore with Testnet pool address.'
+          : 'Market created in Cloud Firestore with Testnet preview pool address.'
       );
     } catch (err) {
       setFormError(
@@ -474,19 +835,25 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           : prev
       );
 
-      let payoutMessage = `Market resolved as ${selectedWinner}.`;
+      const localBatch = computeMarketBatchPayouts({
+        marketId: activeMarket.id,
+        creatorAddress: activeMarket.creator.zcashUnifiedAddress || activeMarket.shieldedPoolAddress,
+        creatorFeeBps: activeMarket.creatorFeeBps,
+        winningOutcome: selectedWinner,
+        bets: marketBets,
+      });
+
+      let payoutMessage =
+        localBatch.uri
+          ? `Market resolved as ${selectedWinner}. One-tap Zashi multi-recipient batch payout QR generated below (${localBatch.recipientCount} output${localBatch.recipientCount === 1 ? '' : 's'}, ${localBatch.totalAmountZec} ZEC).`
+          : `Market resolved as ${selectedWinner}.`;
+
       try {
-        const res = await fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/resolve`, {
+        await fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/resolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ winningOutcome: selectedWinner }),
         });
-        if (res.ok) {
-          const data = (await res.json()) as { payoutNote?: string };
-          if (data.payoutNote) {
-            payoutMessage = `Market resolved as ${selectedWinner}. ${data.payoutNote}`;
-          }
-        }
         void onRefresh?.();
       } catch {
         // Firestore resolution already succeeded
@@ -511,9 +878,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-200">
-        <div className="space-y-2 max-w-2xl">
-          <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+      <section className="flex flex-col md:flex-row md:items-end justify-between gap-4 sm:gap-6 pb-5 sm:pb-6 border-b border-slate-200">
+        <div className="space-y-2 max-w-2xl min-w-0">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
             {activeMarket ? 'Active Creator Market Console' : 'Host a Zcash Prediction Market'}
           </h1>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -531,7 +898,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               setActionError(null);
               setActionSuccess(null);
             }}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Create Another Market</span>
@@ -541,7 +908,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
       {/* Sign-in Prompt if Unauthenticated */}
       {!user && (
-        <section className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <h2 className="font-display text-base font-semibold text-slate-900">
               Sign in with Google to Host Markets
@@ -580,7 +947,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             {/* Left: Market Identity, Status & Two Massive Host Controls */}
-            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 flex flex-col justify-between gap-6">
+            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col justify-between gap-5 sm:gap-6">
               <div className="space-y-4">
                 {/* Quiet unboxed metadata line */}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -605,24 +972,29 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                     <>
                       <span aria-hidden="true">·</span>
                       <span>
-                        Pool: {walletProvisionSource === 'zingo-cli' ? 'zingo-cli node' : 'Testnet preview'}
+                        Pool:{' '}
+                        {walletProvisionSource === 'zashi'
+                          ? 'Self-Custodial Zashi'
+                          : walletProvisionSource === 'zingo-cli'
+                          ? 'zingo-cli node'
+                          : 'Testnet preview'}
                       </span>
                     </>
                   )}
                 </div>
 
-                <h2 className="font-display text-2xl font-bold text-slate-900 leading-snug [text-wrap:balance]">
+                <h2 className="font-display text-xl sm:text-2xl font-bold text-slate-900 leading-snug [text-wrap:balance]">
                   {activeMarket.question}
                 </h2>
 
                 {/* Market ID Copy Row */}
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <div className="p-3.5 sm:p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-500">Market ID</span>
                     <button
                       type="button"
                       onClick={() => void handleCopy('market-id', activeMarket.id)}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 cursor-pointer"
+                      className="inline-flex items-center gap-1.5 min-h-[32px] px-2 text-xs font-medium text-slate-700 hover:text-slate-900 cursor-pointer"
                     >
                       {copiedKey === 'market-id' ? (
                         <>
@@ -637,28 +1009,28 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                       )}
                     </button>
                   </div>
-                  <p className="font-mono text-sm font-semibold text-slate-900 break-all select-all">
+                  <p className="font-mono text-xs sm:text-sm font-semibold text-slate-900 break-all select-all">
                     {activeMarket.id}
                   </p>
                 </div>
 
                 {/* Live Pool Metrics */}
-                <div className="grid grid-cols-3 gap-4 pt-2 border-t border-slate-100 font-mono tabular-nums">
+                <div className="grid grid-cols-1 min-[360px]:grid-cols-3 gap-3 sm:gap-4 pt-2 border-t border-slate-100 font-mono tabular-nums">
                   <div>
                     <p className="font-sans text-xs text-slate-500">YES Odds</p>
-                    <p className="text-lg font-semibold text-emerald-700">
+                    <p className="text-base sm:text-lg font-semibold text-emerald-700">
                       {activeMarket.yesProbability.toFixed(1)}%
                     </p>
                   </div>
                   <div>
                     <p className="font-sans text-xs text-slate-500">NO Odds</p>
-                    <p className="text-lg font-semibold text-rose-700">
+                    <p className="text-base sm:text-lg font-semibold text-rose-700">
                       {activeMarket.noProbability.toFixed(1)}%
                     </p>
                   </div>
                   <div>
                     <p className="font-sans text-xs text-slate-500">Pool Liquidity</p>
-                    <p className="text-lg font-semibold text-slate-900">
+                    <p className="text-base sm:text-lg font-semibold text-slate-900">
                       {formatZec(activeMarket.liquidityZatoshis, 1)}
                     </p>
                   </div>
@@ -666,7 +1038,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               </div>
 
               {/* Two Massive Host Action Buttons */}
-              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="pt-4 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <button
                   type="button"
                   onClick={() => void handleLockBetting()}
@@ -675,9 +1047,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                     activeMarket.status === MarketStatus.Locked ||
                     activeMarket.status === MarketStatus.Resolved
                   }
-                  className="w-full py-4 px-5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed text-amber-950 font-display text-base font-bold transition-colors duration-150 flex items-center justify-center gap-2.5 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+                  className="w-full min-h-[52px] py-3.5 px-4 sm:px-5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed text-amber-950 font-display text-sm sm:text-base font-bold transition-colors duration-150 flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
                 >
-                  <Lock className="w-5 h-5 text-amber-700 shrink-0" aria-hidden="true" />
+                  <Lock className="w-4 h-4 sm:w-5 sm:h-5 text-amber-700 shrink-0" aria-hidden="true" />
                   <span>
                     {locking
                       ? 'Locking Betting...'
@@ -694,9 +1066,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                     setResolveModalOpen(true);
                   }}
                   disabled={resolving || activeMarket.status === MarketStatus.Resolved}
-                  className="w-full py-4 px-5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-display text-base font-bold transition-colors duration-150 flex items-center justify-center gap-2.5 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+                  className="w-full min-h-[52px] py-3.5 px-4 sm:px-5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white font-display text-sm sm:text-base font-bold transition-colors duration-150 flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
                 >
-                  <Trophy className="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true" />
+                  <Trophy className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400 shrink-0" aria-hidden="true" />
                   <span>
                     {activeMarket.status === MarketStatus.Resolved
                       ? `🏆 Resolved: ${activeMarket.winningOutcome}`
@@ -707,7 +1079,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
             </div>
 
             {/* Right: QR Code Link to Join */}
-            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 flex flex-col items-center justify-between gap-5 text-center">
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col items-center justify-between gap-4 sm:gap-5 text-center">
               <div className="space-y-1">
                 <h3 className="font-display text-base font-semibold text-slate-900">
                   QR Code Link to Join
@@ -717,7 +1089,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 </p>
               </div>
 
-              <div className="p-4 bg-white border border-slate-200 rounded-xl">
+              <div className="p-3 sm:p-4 bg-white border border-slate-200 rounded-xl max-w-[240px] w-full flex items-center justify-center">
                 <QRCodeSVG
                   value={joinUrl}
                   size={208}
@@ -725,6 +1097,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                   includeMargin={false}
                   bgColor="#ffffff"
                   fgColor="#0f172a"
+                  className="w-full h-auto max-w-[208px]"
                 />
               </div>
 
@@ -757,7 +1130,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenRoom(activeMarket.id)}
-                    className="w-full py-2 px-4 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full min-h-[44px] py-2.5 px-4 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 inline-flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
                     <span>Open Player Betting Room</span>
@@ -768,7 +1141,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenMarketModal(activeMarket)}
-                    className="w-full py-2 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 transition-colors duration-150 inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full min-h-[44px] py-2.5 px-4 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:text-slate-900 transition-colors duration-150 inline-flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
                     <span>Preview Bettor ZIP-321 Drawer</span>
@@ -777,13 +1150,370 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               </div>
             </div>
           </div>
+
+          {/* ONE-TAP ZASHI MULTI-RECIPIENT BATCH PAYOUT (Shown when Resolved) */}
+          {activeMarket.status === MarketStatus.Resolved && resolvedBatchPayout && (
+            <section className="bg-white border border-emerald-300 rounded-xl p-4 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="w-5 h-5 text-emerald-700 shrink-0" aria-hidden="true" />
+                    <h3 className="font-display text-lg font-bold text-slate-900">
+                      One-Tap Zashi Multi-Recipient Batch Payout (ZIP-321)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {resolvedBatchPayout.note} Scan or tap below to approve every winning payout and
+                    your creator fee in a single shielded Zashi transaction—zero server custody.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 min-[380px]:grid-cols-3 gap-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg font-mono tabular-nums text-xs">
+                <div>
+                  <span className="font-sans text-slate-500 block">Total Pool</span>
+                  <span className="text-sm sm:text-base font-semibold text-slate-900">
+                    {formatZec(resolvedBatchPayout.totalPoolZatoshis, 4)}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-sans text-slate-500 block">
+                    Creator Fee ({(activeMarket.creatorFeeBps / 100).toFixed(2)}%)
+                  </span>
+                  <span className="text-sm sm:text-base font-semibold text-amber-800">
+                    {formatZec(resolvedBatchPayout.creatorFeeZatoshis, 4)}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-sans text-slate-500 block">
+                    Winners Pool ({activeMarket.winningOutcome})
+                  </span>
+                  <span className="text-sm sm:text-base font-semibold text-emerald-700">
+                    {formatZec(resolvedBatchPayout.distributableZatoshis, 4)}
+                  </span>
+                </div>
+              </div>
+
+              {resolvedBatchPayout.uri ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
+                  {/* Batch QR + Deep Link */}
+                  <div className="lg:col-span-5 flex flex-col items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="p-3 bg-white border border-slate-200 rounded-xl max-w-[232px] w-full flex items-center justify-center">
+                      <QRCodeSVG
+                        value={resolvedBatchPayout.uri}
+                        size={208}
+                        level="M"
+                        includeMargin={false}
+                        bgColor="#ffffff"
+                        fgColor="#0f172a"
+                        className="w-full h-auto max-w-[208px]"
+                      />
+                    </div>
+
+                    <div className="w-full space-y-2">
+                      <a
+                        href={resolvedBatchPayout.uri}
+                        className="w-full min-h-[48px] px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4" aria-hidden="true" />
+                        <span>Approve Batch Payout in Zashi</span>
+                      </a>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleCopy('batch-zip321', resolvedBatchPayout.uri)}
+                        className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-white border border-slate-200 hover:border-slate-300 text-slate-800 text-xs font-semibold inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                      >
+                        {copiedKey === 'batch-zip321' ? (
+                          <>
+                            <Check className="w-4 h-4 text-emerald-600" aria-hidden="true" />
+                            <span>Copied Multi-Recipient URI</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" aria-hidden="true" />
+                            <span>Copy Batch ZIP-321 URI</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Itemized Output Breakdown + URI Preview */}
+                  <div className="lg:col-span-7 space-y-3 min-w-0">
+                    <h4 className="text-xs font-semibold text-slate-700">
+                      Itemized Payout Outputs ({resolvedBatchPayout.recipientCount})
+                    </h4>
+                    <ul className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+                      {resolvedBatchPayout.recipients.map((rec, idx) => (
+                        <li
+                          key={`${rec.address}-${idx}`}
+                          className="p-3 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`font-semibold ${
+                                  rec.role === 'creator' ? 'text-amber-800' : 'text-emerald-700'
+                                }`}
+                              >
+                                #{idx} · {rec.role === 'creator' ? 'Creator Fee' : `${activeMarket.winningOutcome} Winner`}
+                              </span>
+                              <span className="font-mono text-slate-400">
+                                {idx === 0 ? 'address' : `address.${idx}`}
+                              </span>
+                            </div>
+                            <p className="font-mono text-slate-700 truncate">{rec.address}</p>
+                            <p className="text-slate-500 truncate">{rec.memo}</p>
+                          </div>
+                          <div className="font-mono font-semibold text-slate-900 tabular-nums shrink-0">
+                            {rec.amountZec.toFixed(6).replace(/\.?0+$/, '')} ZEC
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1 text-xs">
+                      <span className="font-medium text-slate-500 block">
+                        Encoded Multi-Recipient ZIP-321 URI
+                      </span>
+                      <p className="font-mono text-slate-700 break-all select-all max-h-24 overflow-y-auto">
+                        {resolvedBatchPayout.uri}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600">
+                  No verified shielded bets were recorded in this market before resolution. Verify
+                  bets while open/locked to generate a multi-recipient Zashi batch payout QR.
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* SELF-CUSTODIAL HYBRID BET VERIFICATION (ZERO-VPS) */}
+          <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-slate-900 shrink-0" aria-hidden="true" />
+                  <h3 className="font-display text-lg font-semibold text-slate-900">
+                    Self-Custodial Bet Verification (Zashi / Local UFVK)
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Paste incoming Zashi transactions or decrypted ZIP-321 memos to lock player bets into
+                  Cloud Firestore, update live CPMM odds, and power your batch payout split—with $0 VPS
+                  cost and zero server custody of spending keys.
+                </p>
+              </div>
+              <span className="font-mono text-xs font-semibold text-slate-700 shrink-0 tabular-nums">
+                {marketBets.length} verified bet{marketBets.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
+              {/* Left: Verify Incoming Bet Form */}
+              <div className="lg:col-span-6 space-y-4">
+                {activeMarket.status === MarketStatus.Resolved ? (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600">
+                    This market is already resolved ({activeMarket.winningOutcome}). Verified bets are
+                    locked into the batch payout breakdown above.
+                  </div>
+                ) : (
+                  <form
+                    onSubmit={(e) => void handleVerifyZashiBet(e)}
+                    className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3.5"
+                  >
+                    {/* Quick Decode Memo from Zashi */}
+                    <div className="space-y-1.5">
+                      <label
+                        htmlFor="zashi-memo-decode"
+                        className="block text-xs font-medium text-slate-700"
+                      >
+                        1. Paste Decrypted Zashi Memo / Base64URL / Hex / ZIP-321 URI (Auto-Fill)
+                      </label>
+                      <textarea
+                        id="zashi-memo-decode"
+                        rows={2}
+                        value={rawZashiMemoInput}
+                        onChange={(e) => handleDecodeZashiMemo(e.target.value)}
+                        placeholder='{"q":"mkt_...","pick":"YES","payout_to":"u1..."} or zcash:u1...'
+                        className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                      />
+                      {memoDecodeNote && (
+                        <p className="text-xs text-amber-800">{memoDecodeNote}</p>
+                      )}
+                    </div>
+
+                    {/* Zcash TxID */}
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <label htmlFor="zashi-txid" className="font-medium text-slate-700">
+                          2. Incoming Zcash TxID (Hex)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setVerifyTxid(generateSampleHexTxid())}
+                          className="text-xs font-medium text-amber-700 hover:text-amber-800 cursor-pointer"
+                        >
+                          Generate Preview Hex TxID
+                        </button>
+                      </div>
+                      <input
+                        id="zashi-txid"
+                        type="text"
+                        required
+                        value={verifyTxid}
+                        onChange={(e) => setVerifyTxid(e.target.value)}
+                        placeholder="64-char hex transaction id from Zashi..."
+                        className="w-full min-h-[42px] px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                      />
+                    </div>
+
+                    {/* Side + Amount */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <span className="block text-xs font-medium text-slate-700">3. Pick</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setVerifyPick(OutcomeSide.Yes)}
+                            className={`min-h-[42px] rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
+                              verifyPick === OutcomeSide.Yes
+                                ? 'bg-emerald-50 border-emerald-600 text-emerald-900'
+                                : 'bg-white border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            YES
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setVerifyPick(OutcomeSide.No)}
+                            className={`min-h-[42px] rounded-lg border text-xs font-bold cursor-pointer transition-colors ${
+                              verifyPick === OutcomeSide.No
+                                ? 'bg-rose-50 border-rose-600 text-rose-900'
+                                : 'bg-white border-slate-200 text-slate-600'
+                            }`}
+                          >
+                            NO
+                          </button>
+                        </div>
+                      </div>
+
+                      <label className="block space-y-1.5">
+                        <span className="block text-xs font-medium text-slate-700">
+                          4. Amount (ZEC)
+                        </span>
+                        <input
+                          type="number"
+                          min="0.0001"
+                          step="0.0001"
+                          required
+                          value={verifyAmountInput}
+                          onChange={(e) => setVerifyAmountInput(e.target.value)}
+                          className="w-full min-h-[42px] px-3 py-2 text-xs font-mono tabular-nums bg-white border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                        />
+                      </label>
+                    </div>
+
+                    {/* Player Return Address */}
+                    <label className="block space-y-1.5">
+                      <span className="block text-xs font-medium text-slate-700">
+                        5. Player Payout Address (`payout_to`: u1... / utest1...)
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        value={verifyPayoutTo}
+                        onChange={(e) => setVerifyPayoutTo(e.target.value)}
+                        placeholder="u1... or utest1..."
+                        className="w-full min-h-[42px] px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                      />
+                    </label>
+
+                    <button
+                      type="submit"
+                      disabled={verifyingBet || !user}
+                      className="w-full min-h-[44px] px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {verifyingBet ? 'Recording Bet in Firestore...' : 'Confirm & Lock Zashi Bet'}
+                    </button>
+                  </form>
+                )}
+
+                {/* Browser-Only Read-Only UFVK Vault */}
+                <div className="p-3.5 bg-white border border-slate-200 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <KeyRound className="w-3.5 h-3.5 text-amber-700 shrink-0" aria-hidden="true" />
+                    <span>Read-Only Viewing Key (Browser-Only UFVK)</span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Optional `uview1...` / `uviewtest1...` key saved strictly in{' '}
+                    <span className="font-mono">localStorage</span> on this device for your WASM /
+                    light-client verification—never sent to Express or Firestore.
+                  </p>
+                  <input
+                    type="text"
+                    value={activeUfvk}
+                    onChange={(e) => handleSaveLocalUfvk(e.target.value)}
+                    placeholder="uview1... or uviewtest1... (local browser only)"
+                    className="w-full min-h-[40px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Right: Verified Bets Ledger */}
+              <div className="lg:col-span-6 space-y-3 min-w-0">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-semibold text-slate-700">
+                    Verified Pool Bets ({marketBets.length})
+                  </span>
+                  <span className="font-mono text-slate-500 break-all truncate max-w-[210px]">
+                    Pool: {activeMarket.shieldedPoolAddress}
+                  </span>
+                </div>
+
+                {marketBets.length === 0 ? (
+                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 leading-relaxed">
+                    No incoming bets have been verified for this market yet. When a player scans your
+                    room QR in Zashi, paste the txid and decrypted memo on the left to record it.
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden max-h-[420px] overflow-y-auto">
+                    {marketBets.map((bet) => (
+                      <li key={bet.id} className="p-3.5 bg-white space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className={`font-display font-bold ${
+                              bet.pick === OutcomeSide.Yes ? 'text-emerald-700' : 'text-rose-700'
+                            }`}
+                          >
+                            {bet.pick} · {zatoshisToZec(bet.amountZatoshis).toFixed(4)} ZEC
+                          </span>
+                          <span className="font-mono text-slate-500 tabular-nums">
+                            {bet.confirmations} conf
+                          </span>
+                        </div>
+                        <p className="font-mono text-slate-700 truncate">
+                          payout_to: {bet.payoutTo}
+                        </p>
+                        <p className="font-mono text-slate-400 truncate">txid: {bet.txid}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       ) : (
         /* CREATE SCREEN */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <form
             onSubmit={(e) => void handleCreateMarket(e)}
-            className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 space-y-5"
+            className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5"
           >
             <div className="space-y-1">
               <h2 className="font-display text-lg font-semibold text-slate-900">
@@ -822,7 +1552,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
             {/* Duration */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
                 <span className="font-medium text-slate-700">Duration (min 5 seconds)</span>
                 <span className="font-mono tabular-nums text-slate-500">
                   Closes {previewClosesAt.toLocaleString()}
@@ -840,7 +1570,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                         setDurationValue(opt.value);
                         setDurationUnit(opt.unit);
                       }}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap cursor-pointer ${
+                      className={`min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap cursor-pointer ${
                         active
                           ? 'bg-slate-900 text-white border-slate-900'
                           : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:text-slate-900'
@@ -863,7 +1593,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                   step="1"
                   value={durationValue}
                   onChange={(e) => setDurationValue(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-24 px-2.5 py-1.5 text-xs font-mono tabular-nums bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  className="w-24 min-h-[40px] px-2.5 py-1.5 text-xs font-mono tabular-nums bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
                 />
                 <select
                   aria-label="Duration unit"
@@ -875,7 +1605,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                       setDurationValue(5);
                     }
                   }}
-                  className="px-2.5 py-1.5 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  className="min-h-[40px] px-2.5 py-1.5 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
                 >
                   <option value="seconds">Seconds</option>
                   <option value="minutes">Minutes</option>
@@ -887,9 +1617,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
             {/* Creator Payout Address */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                 <label htmlFor="creator-u1-address" className="font-medium text-slate-700">
-                  Creator Payout Address (u1... / utest1...)
+                  Creator Fee Address (u1... / utest1...)
                 </label>
                 <button
                   type="button"
@@ -908,8 +1638,83 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 value={payoutAddress}
                 onChange={(e) => setPayoutAddress(e.target.value)}
                 placeholder="u1... or utest1..."
-                className="w-full px-3.5 py-2.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                className="w-full min-h-[42px] px-3.5 py-2.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
               />
+            </div>
+
+            {/* Zero-VPS Zashi Pool Address Selector */}
+            <div className="p-3.5 sm:p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-800">
+                  Market Shielded Pool Address
+                </span>
+                <div className="inline-flex items-center p-0.5 bg-slate-200/70 rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setPoolAddressMode('zashi')}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
+                      poolAddressMode === 'zashi'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Zashi Unified (No VPS)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPoolAddressMode('zingo')}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer ${
+                      poolAddressMode === 'zingo'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    zingo-cli (Optional)
+                  </button>
+                </div>
+              </div>
+
+              {poolAddressMode === 'zashi' ? (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <label htmlFor="market-pool-u1-address" className="text-slate-600">
+                      Paste your dedicated Zashi sub-account Unified Address:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => payoutAddress && setCustomPoolAddress(payoutAddress)}
+                      className="text-xs font-medium text-amber-700 hover:text-amber-800 cursor-pointer"
+                    >
+                      Same as Creator Address
+                    </button>
+                  </div>
+                  <input
+                    id="market-pool-u1-address"
+                    type="text"
+                    value={customPoolAddress}
+                    onChange={(e) => setCustomPoolAddress(e.target.value)}
+                    placeholder={
+                      payoutAddress
+                        ? 'Leave blank to use Creator Fee Address above, or paste Zashi sub-account u1...'
+                        : 'u1... or utest1... Zashi sub-account address'
+                    }
+                    className="w-full min-h-[42px] px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                  />
+                  <input
+                    type="text"
+                    value={createUfvk}
+                    onChange={(e) => setCreateUfvk(e.target.value)}
+                    placeholder="Optional read-only UFVK (uview1... — browser localStorage only)"
+                    aria-label="Optional read-only UFVK stored locally in browser"
+                    className="w-full min-h-[40px] px-3 py-2 text-xs font-mono bg-white border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600"
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Calls <span className="font-mono">/api/zcash/wallet</span> on launch if a VPS
+                  node is attached, or generates a deterministic preview address otherwise.
+                </p>
+              )}
             </div>
 
             {/* Category */}
@@ -918,7 +1723,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as MarketCategory)}
-                className="w-full px-3.5 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                className="w-full min-h-[42px] px-3.5 py-2 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
               >
                 {CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
@@ -941,7 +1746,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           </form>
 
           {/* Right Column: Hosted Markets Switcher */}
-          <aside className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+          <aside className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
             <div className="space-y-1">
               <h2 className="font-display text-base font-semibold text-slate-900">
                 Your Hosted Markets ({myHostedMarkets.length})
@@ -1003,7 +1808,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       {/* Resolve Market Modal (Select YES / NO) */}
       {resolveModalOpen && activeMarket && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="resolve-modal-title"
@@ -1013,7 +1818,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
             className="fixed inset-0 bg-slate-900/45 backdrop-blur-[1px]"
           />
 
-          <div className="relative z-10 w-full max-w-md bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-xl">
+          <div className="relative z-10 w-full max-w-md max-h-[90dvh] overflow-y-auto bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5 shadow-xl">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <h2
@@ -1031,7 +1836,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 disabled={resolving}
                 onClick={() => setResolveModalOpen(false)}
                 aria-label="Close resolve modal"
-                className="p-1.5 text-slate-400 hover:text-slate-900 rounded-lg cursor-pointer"
+                className="min-h-[40px] min-w-[40px] inline-flex items-center justify-center text-slate-400 hover:text-slate-900 rounded-lg cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
@@ -1045,7 +1850,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedWinner(OutcomeSide.Yes)}
-                className={`py-4 px-4 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 cursor-pointer ${
+                className={`min-h-[52px] py-4 px-4 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 cursor-pointer ${
                   selectedWinner === OutcomeSide.Yes
                     ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
@@ -1056,7 +1861,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedWinner(OutcomeSide.No)}
-                className={`py-4 px-4 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 cursor-pointer ${
+                className={`min-h-[52px] py-4 px-4 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 cursor-pointer ${
                   selectedWinner === OutcomeSide.No
                     ? 'border-rose-600 bg-rose-50 text-rose-900'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
@@ -1066,12 +1871,31 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               </button>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+            {modalPreviewBatchPayout && (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5 text-xs">
+                <div className="flex items-center justify-between font-semibold text-slate-800">
+                  <span>Zashi ZIP-321 Batch Preview</span>
+                  <span className="font-mono tabular-nums">
+                    {modalPreviewBatchPayout.recipientCount} output
+                    {modalPreviewBatchPayout.recipientCount === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <p className="text-slate-600 leading-relaxed">{modalPreviewBatchPayout.note}</p>
+                {modalPreviewBatchPayout.totalPoolZatoshis > 0 && (
+                  <p className="font-mono tabular-nums text-slate-700">
+                    Fee: {formatZec(modalPreviewBatchPayout.creatorFeeZatoshis, 4)} · Winners:{' '}
+                    {formatZec(modalPreviewBatchPayout.distributableZatoshis, 4)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2.5 sm:gap-3 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 disabled={resolving}
                 onClick={() => setResolveModalOpen(false)}
-                className="px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg cursor-pointer"
+                className="min-h-[44px] px-4 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg cursor-pointer"
               >
                 Cancel
               </button>
@@ -1079,9 +1903,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 type="button"
                 disabled={resolving}
                 onClick={() => void handleConfirmResolve()}
-                className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg cursor-pointer"
+                className="min-h-[44px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg cursor-pointer"
               >
-                {resolving ? 'Resolving...' : `Confirm ${selectedWinner} Winner`}
+                {resolving ? 'Generating Zashi Payout QR...' : `Confirm ${selectedWinner} Winner`}
               </button>
             </div>
           </div>

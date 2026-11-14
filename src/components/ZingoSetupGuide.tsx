@@ -259,11 +259,11 @@ export const ZingoSetupGuide: React.FC = () => {
   const completedCount = stepIds.filter((id) => completedSteps[id]).length;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header & Progress Summary */}
-      <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-200">
-        <div className="space-y-2 max-w-2xl">
-          <h1 className="font-display text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+      <section className="flex flex-col md:flex-row md:items-end justify-between gap-4 sm:gap-6 pb-5 sm:pb-6 border-b border-slate-200">
+        <div className="space-y-2 max-w-2xl min-w-0">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
             Free Linux VPS setup for zingo-cli (.env)
           </h1>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -273,8 +273,8 @@ export const ZingoSetupGuide: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-6 shrink-0">
-          <div className="font-mono tabular-nums text-right">
+        <div className="flex items-center justify-between md:justify-end gap-4 sm:gap-6 w-full md:w-auto shrink-0">
+          <div className="font-mono tabular-nums text-left md:text-right">
             <p className="font-sans text-xs text-slate-500">Checklist Progress</p>
             <p className="text-lg font-semibold text-slate-900">
               {completedCount} / {stepIds.length} steps
@@ -284,7 +284,7 @@ export const ZingoSetupGuide: React.FC = () => {
             <button
               type="button"
               onClick={() => setCompletedSteps({})}
-              className="px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:text-slate-900 hover:border-slate-300 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+              className="min-h-[40px] px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:text-slate-900 hover:border-slate-300 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               Clear Checks
             </button>
@@ -293,9 +293,9 @@ export const ZingoSetupGuide: React.FC = () => {
       </section>
 
       {/* Host Profile Selector & Live .env Inputs */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
         {/* Left: Free VPS Host Selector */}
-        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
           <div className="space-y-1">
             <h2 className="font-display text-base font-semibold text-slate-900">
               Choose your free Ubuntu VPS
@@ -308,7 +308,7 @@ export const ZingoSetupGuide: React.FC = () => {
           <div
             role="tablist"
             aria-label="Free VPS host selector"
-            className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg"
+            className="flex flex-nowrap sm:flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg overflow-x-auto no-scrollbar max-w-full"
           >
             {(Object.keys(VPS_PROVIDERS) as VpsProviderId[]).map((id) => {
               const item = VPS_PROVIDERS[id];
@@ -320,7 +320,7 @@ export const ZingoSetupGuide: React.FC = () => {
                   role="tab"
                   aria-selected={isActive}
                   onClick={() => setVpsId(id)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                     isActive
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -339,9 +339,9 @@ export const ZingoSetupGuide: React.FC = () => {
         </div>
 
         {/* Right: Editable Environment Parameters */}
-        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="space-y-0.5">
+        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+            <div className="space-y-0.5 min-w-0">
               <h2 className="font-display text-base font-semibold text-slate-900">
                 Customize .env path & network
               </h2>
@@ -352,7 +352,7 @@ export const ZingoSetupGuide: React.FC = () => {
             <button
               type="button"
               onClick={handleResetDefaults}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
               <span>Reset Defaults</span>
@@ -540,9 +540,9 @@ export const ZingoSetupGuide: React.FC = () => {
         </StepBlock>
 
         {/* Step 06: Generated .env + Live Server Readiness Check */}
-        <article className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1">
+        <article className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
+            <div className="space-y-1 min-w-0">
               <h2 className="font-display text-lg font-semibold text-slate-900">
                 06. Copy Generated .env &amp; Test Server Readiness
               </h2>
@@ -556,7 +556,7 @@ export const ZingoSetupGuide: React.FC = () => {
               type="button"
               onClick={() => toggleStep('06')}
               aria-pressed={Boolean(completedSteps['06'])}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
                 completedSteps['06']
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:border-slate-300'
@@ -569,14 +569,14 @@ export const ZingoSetupGuide: React.FC = () => {
 
           {/* Complete .env block */}
           <div className="bg-slate-950 rounded-lg border border-slate-800 overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3">
-              <span className="font-mono text-xs text-slate-400">
+            <div className="px-3.5 sm:px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3">
+              <span className="font-mono text-xs text-slate-400 truncate min-w-0">
                 .env (Zcash / zingo-cli variables)
               </span>
               <button
                 type="button"
                 onClick={() => void copyText('env-block', envBlock)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 min-h-[32px] px-2.5 py-1 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {copiedId === 'env-block' ? (
                   <>
@@ -591,14 +591,14 @@ export const ZingoSetupGuide: React.FC = () => {
                 )}
               </button>
             </div>
-            <pre className="p-4 text-xs font-mono text-slate-100 leading-relaxed overflow-x-auto">
+            <pre className="p-3.5 sm:p-4 text-xs font-mono text-slate-100 leading-relaxed overflow-x-auto">
               <code>{envBlock}</code>
             </pre>
           </div>
 
           {/* Live Diagnostic Endpoint Check */}
           <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <p className="text-sm font-medium text-slate-900">
                 Backend Environment Diagnostic
               </p>
@@ -612,7 +612,7 @@ export const ZingoSetupGuide: React.FC = () => {
               type="button"
               onClick={() => void checkReadiness()}
               disabled={statusLoading}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+              className="inline-flex items-center justify-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 ${statusLoading ? 'animate-spin' : ''}`}
@@ -717,10 +717,10 @@ const StepBlock: React.FC<StepBlockProps> = ({
   const isCopied = copiedId === commandId;
 
   return (
-    <article className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1.5 max-w-3xl">
-          <h2 className="font-display text-lg font-semibold text-slate-900">
+    <article className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
+        <div className="space-y-1.5 max-w-3xl min-w-0">
+          <h2 className="font-display text-base sm:text-lg font-semibold text-slate-900">
             {stepNumber}. {title}
           </h2>
           <div>{children}</div>
@@ -730,7 +730,7 @@ const StepBlock: React.FC<StepBlockProps> = ({
           type="button"
           onClick={onToggleComplete}
           aria-pressed={completed}
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
+          className={`inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer ${
             completed
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
               : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:border-slate-300'
@@ -742,12 +742,12 @@ const StepBlock: React.FC<StepBlockProps> = ({
       </div>
 
       <div className="bg-slate-950 rounded-lg border border-slate-800 overflow-hidden">
-        <div className="px-4 py-2 border-b border-slate-800 flex items-center justify-between gap-3">
-          <span className="text-xs font-mono text-slate-400 truncate">{commandLabel}</span>
+        <div className="px-3.5 sm:px-4 py-2 border-b border-slate-800 flex items-center justify-between gap-3">
+          <span className="text-xs font-mono text-slate-400 truncate min-w-0">{commandLabel}</span>
           <button
             type="button"
             onClick={() => void onCopy(commandId, command)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1.5 min-h-[32px] px-2.5 py-1 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
           >
             {isCopied ? (
               <>
@@ -762,7 +762,7 @@ const StepBlock: React.FC<StepBlockProps> = ({
             )}
           </button>
         </div>
-        <pre className="p-4 text-xs font-mono text-slate-100 leading-relaxed overflow-x-auto">
+        <pre className="p-3.5 sm:p-4 text-xs font-mono text-slate-100 leading-relaxed overflow-x-auto">
           <code>{command}</code>
         </pre>
       </div>

@@ -643,36 +643,36 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       </div>
 
       {/* Market Header Summary */}
-      <section className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-4">
+      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <span className="font-medium text-slate-700">{market.category}</span>
             <span aria-hidden="true">·</span>
-            <span>@{market.creator.handle}</span>
+            <span className="truncate">@{market.creator.handle}</span>
           </div>
           <MarketCountdown market={market} variant="card" />
         </div>
 
-        <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+        <h1 className="font-display text-xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
           {market.question}
         </h1>
 
-        <div className="grid grid-cols-3 gap-4 pt-3 border-t border-slate-100 font-mono tabular-nums">
-          <div>
+        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 pt-3 border-t border-slate-100 font-mono tabular-nums">
+          <div className="min-w-0">
             <p className="font-sans text-xs text-slate-500">YES Odds</p>
-            <p className="text-lg font-semibold text-emerald-700">
+            <p className="text-base sm:text-lg font-semibold text-emerald-700">
               {market.yesProbability.toFixed(1)}%
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="font-sans text-xs text-slate-500">NO Odds</p>
-            <p className="text-lg font-semibold text-rose-700">
+            <p className="text-base sm:text-lg font-semibold text-rose-700">
               {market.noProbability.toFixed(1)}%
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="font-sans text-xs text-slate-500">Volume</p>
-            <p className="text-lg font-semibold text-slate-900">
+            <p className="text-base sm:text-lg font-semibold text-slate-900 truncate">
               {formatZec(market.totalVolumeZatoshis, 2)}
             </p>
           </div>
@@ -704,9 +704,9 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       )}
 
       {/* Mobile-First 2-Column Responsive Betting Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
         {/* Left: Player Input Form */}
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-5">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
           <div className="space-y-1">
             <h2 className="font-display text-lg font-semibold text-slate-900">
               Place Shielded Bet
@@ -772,14 +772,14 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               onChange={(e) => setAmountInput(e.target.value)}
               className="w-full min-h-[48px] px-3.5 py-2.5 text-base font-mono tabular-nums bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
             />
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2">
               {QUICK_AMOUNTS.map((preset) => (
                 <button
                   key={preset}
                   type="button"
                   disabled={isBettingDisabled}
                   onClick={() => setAmountInput(preset)}
-                  className={`min-h-[40px] py-2 text-xs font-mono font-medium rounded-lg border transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                  className={`min-h-[40px] py-2 px-2 text-xs font-mono font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     amountInput === preset
                       ? 'bg-slate-900 text-white border-slate-900'
                       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
@@ -790,7 +790,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               ))}
             </div>
             {quote && (
-              <div className="pt-1 flex items-center justify-between text-xs font-mono tabular-nums text-slate-600">
+              <div className="pt-1 flex flex-wrap items-center justify-between gap-2 text-xs font-mono tabular-nums text-slate-600">
                 <span>Est. Shares: {quote.sharesOut.toFixed(4)}</span>
                 <span>Creator Fee: {formatZec(quote.feeZatoshis, 4)}</span>
               </div>
@@ -824,7 +824,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         </section>
 
         {/* Right: Dual Checkout Rail (ZIP-321 Shielded + Pollar Instant USDC) */}
-        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-5">
+        <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
               <button
@@ -899,15 +899,18 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="flex flex-col items-center justify-center p-5 bg-white border border-slate-200 rounded-xl">
-                    <QRCodeSVG
-                      value={zip321Result.uri}
-                      size={220}
-                      level="M"
-                      includeMargin={false}
-                      bgColor="#ffffff"
-                      fgColor="#0f172a"
-                    />
+                  <div className="flex flex-col items-center justify-center p-4 sm:p-5 bg-white border border-slate-200 rounded-xl">
+                    <div className="w-full max-w-[220px] flex items-center justify-center">
+                      <QRCodeSVG
+                        value={zip321Result.uri}
+                        size={220}
+                        level="M"
+                        includeMargin={false}
+                        bgColor="#ffffff"
+                        fgColor="#0f172a"
+                        className="w-full h-auto max-w-[220px]"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1029,7 +1032,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
                     {(pollarChains.length > 0
                       ? pollarChains
                       : (['STELLAR', 'SOLANA', 'POLYGON'] as WalletChain[])
@@ -1039,7 +1042,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                         type="button"
                         disabled={isBettingDisabled}
                         onClick={() => setPollarChain(ch)}
-                        className={`min-h-[40px] py-2 text-xs font-semibold rounded-lg border cursor-pointer disabled:opacity-50 ${
+                        className={`min-h-[40px] py-2 px-1.5 sm:px-3 text-xs font-semibold rounded-lg border truncate cursor-pointer disabled:opacity-50 ${
                           pollarChain === ch
                             ? 'bg-slate-900 text-white border-slate-900'
                             : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
@@ -1117,7 +1120,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
 
           {/* Live Matching Bets Status */}
           <div className="pt-3 border-t border-slate-100 space-y-2">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
               <span className="font-semibold text-slate-600">
                 Your Detected Shielded Bets ({matchingUserBets.length})
               </span>
@@ -1158,11 +1161,11 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       </div>
 
       {/* Market Sentiment Chart & Countdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 sm:p-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6">
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-6">
           <SentimentTrendChart market={market} />
         </div>
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-4">
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
           <MarketCountdown market={market} variant="drawer" />
           <div className="space-y-1.5 pt-2 border-t border-slate-100">
             <h3 className="text-xs font-semibold text-slate-500">Resolution Criteria</h3>

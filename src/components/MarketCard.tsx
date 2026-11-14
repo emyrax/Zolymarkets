@@ -23,14 +23,14 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
   const isDown = change < 0;
 
   return (
-    <article className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between gap-5 transition-colors hover:border-slate-300">
-      <div className="space-y-3">
+    <article className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 flex flex-col justify-between gap-4 sm:gap-5 transition-colors hover:border-slate-300 min-w-0">
+      <div className="space-y-3 min-w-0">
         {/* Quiet unboxed metadata line */}
-        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-          <div className="flex items-center gap-1.5 truncate">
-            <span className="font-medium text-slate-700">{market.category}</span>
-            <span aria-hidden="true">·</span>
-            <span>@{market.creator.handle}</span>
+        <div className="flex items-center justify-between gap-2.5 text-xs text-slate-500">
+          <div className="flex items-center gap-1.5 min-w-0 truncate">
+            <span className="font-medium text-slate-700 truncate">{market.category}</span>
+            <span aria-hidden="true" className="shrink-0">·</span>
+            <span className="truncate">@{market.creator.handle}</span>
           </div>
           <MarketCountdown market={market} variant="card" />
         </div>
@@ -39,9 +39,9 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
         <button
           type="button"
           onClick={() => onSelect(market)}
-          className="text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 rounded"
+          className="w-full text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 rounded py-0.5"
         >
-          <h3 className="font-display text-base font-semibold text-slate-900 leading-snug group-hover:text-amber-700 transition-colors">
+          <h3 className="font-display text-base font-semibold text-slate-900 leading-snug group-hover:text-amber-700 transition-colors break-words">
             {market.question}
           </h3>
         </button>
@@ -51,8 +51,8 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
         {/* CPMM Probability Split Bar */}
         <div className="space-y-2">
           <div className="flex items-baseline justify-between gap-2 text-xs font-medium">
-            <div className="flex items-center gap-2 font-mono tabular-nums">
-              <span className="text-emerald-700">
+            <div className="flex items-center gap-1.5 sm:gap-2 font-mono tabular-nums min-w-0">
+              <span className="text-emerald-700 whitespace-nowrap">
                 YES {market.yesProbability.toFixed(1)}%
               </span>
               <span
@@ -79,7 +79,7 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
                 </span>
               </span>
             </div>
-            <span className="text-rose-700 font-mono tabular-nums">
+            <span className="text-rose-700 font-mono tabular-nums whitespace-nowrap shrink-0">
               NO {market.noProbability.toFixed(1)}%
             </span>
           </div>
@@ -96,17 +96,17 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
         </div>
 
         {/* Footer metrics & action */}
-        <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-4 text-xs text-slate-500">
-          <div className="flex items-center gap-3 font-mono tabular-nums">
+        <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs text-slate-500">
+          <div className="flex items-center gap-2 sm:gap-3 font-mono tabular-nums">
             <span>Vol {formatZec(market.totalVolumeZatoshis, 1)}</span>
             <span aria-hidden="true">·</span>
             <span>Liq {formatZec(market.liquidityZatoshis, 1)}</span>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">
             <button
               type="button"
               onClick={() => onSelect(market)}
-              className="font-sans font-medium text-slate-600 hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              className="min-h-[36px] px-2.5 py-1.5 font-sans font-medium text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Inspect
             </button>
@@ -114,7 +114,7 @@ export const MarketCard: React.FC<MarketCardProps> = ({ market, onSelect, onOpen
               <button
                 type="button"
                 onClick={() => onOpenRoom(market.id)}
-                className="inline-flex items-center gap-1 font-sans font-semibold text-slate-900 hover:text-amber-700 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="min-h-[36px] px-2.5 py-1.5 inline-flex items-center gap-1 font-sans font-semibold text-slate-900 hover:text-amber-700 rounded-md hover:bg-amber-50/70 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <span>Bet</span>
                 <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />

@@ -72,7 +72,7 @@ export const SchemaExplorer: React.FC = () => {
           <h2 className="font-display text-lg font-semibold text-slate-900">
             Firestore Collections ({tables.length})
           </h2>
-          <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+          <div className="flex flex-nowrap sm:flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg overflow-x-auto no-scrollbar max-w-full">
             {tables.map((table) => {
               const active = table.name === currentCollection.name;
               return (
@@ -80,7 +80,7 @@ export const SchemaExplorer: React.FC = () => {
                   key={table.name}
                   type="button"
                   onClick={() => setSelectedCollection(table.name)}
-                  className={`px-3 py-1.5 text-xs font-mono font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  className={`min-h-[36px] px-3 py-1.5 text-xs font-mono font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     active
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -94,9 +94,9 @@ export const SchemaExplorer: React.FC = () => {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+          <div className="px-4 sm:px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-0.5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-mono text-sm font-semibold text-slate-900">
                   /{currentCollection.name}
                 </h3>
@@ -115,16 +115,16 @@ export const SchemaExplorer: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
-                  <th className="py-2.5 px-5">Field</th>
+                  <th className="py-2.5 px-4 sm:px-5">Field</th>
                   <th className="py-2.5 px-4">Firestore Type</th>
                   <th className="py-2.5 px-4">Rule Constraint</th>
-                  <th className="py-2.5 px-5">Purpose</th>
+                  <th className="py-2.5 px-4 sm:px-5">Purpose</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {currentCollection.columns.map((col) => (
                   <tr key={col.name} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
+                    <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
                       {col.name}
                     </td>
                     <td className="py-2.5 px-4 font-mono text-amber-800 whitespace-nowrap">
@@ -133,7 +133,7 @@ export const SchemaExplorer: React.FC = () => {
                     <td className="py-2.5 px-4 font-mono text-slate-600 whitespace-nowrap">
                       {col.constraints}
                     </td>
-                    <td className="py-2.5 px-5 text-slate-600">{col.notes}</td>
+                    <td className="py-2.5 px-4 sm:px-5 text-slate-600 min-w-[200px]">{col.notes}</td>
                   </tr>
                 ))}
               </tbody>
@@ -148,28 +148,30 @@ export const SchemaExplorer: React.FC = () => {
           Implemented Module Map
         </h2>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
-                <th className="py-2.5 px-5">File / Endpoint</th>
-                <th className="py-2.5 px-4">Responsibility</th>
-                <th className="py-2.5 px-5 text-right">Phase</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {PROJECT_MODULES.map((mod) => (
-                <tr key={mod.path} className="hover:bg-slate-50/70">
-                  <td className="py-2.5 px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
-                    {mod.path}
-                  </td>
-                  <td className="py-2.5 px-4 text-slate-600">{mod.role}</td>
-                  <td className="py-2.5 px-5 text-right font-medium whitespace-nowrap text-emerald-700">
-                    {mod.phase}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
+                  <th className="py-2.5 px-4 sm:px-5">File / Endpoint</th>
+                  <th className="py-2.5 px-4">Responsibility</th>
+                  <th className="py-2.5 px-4 sm:px-5 text-right">Phase</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {PROJECT_MODULES.map((mod) => (
+                  <tr key={mod.path} className="hover:bg-slate-50/70">
+                    <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
+                      {mod.path}
+                    </td>
+                    <td className="py-2.5 px-4 text-slate-600 min-w-[200px]">{mod.role}</td>
+                    <td className="py-2.5 px-4 sm:px-5 text-right font-medium whitespace-nowrap text-emerald-700">
+                      {mod.phase}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
