@@ -1072,7 +1072,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   return (
     <div className="space-y-8">
       {/* Page Header */}
-      <section className="flex flex-col md:flex-row md:items-end justify-between gap-4 sm:gap-6 pb-5 sm:pb-6 border-b border-slate-200">
+      <section className="flex flex-col md:flex-row md:items-end justify-between gap-4 sm:gap-6 pb-5 sm:pb-6 border-b border-[var(--border-subtle)]">
         <div className="space-y-2 max-w-2xl min-w-0">
           <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
             {activeMarket ? 'Active Creator Market Console' : 'Host a Zcash Prediction Market'}
@@ -1102,7 +1102,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
       {/* Sign-in Prompt: Zcash or Pollar/Polygon primary, Google optional */}
       {!hasAnyIdentity ? (
-        <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <section className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <h2 className="font-display text-base font-semibold text-slate-900">
               Sign in with Zcash or Pollar / Polygon to Host Markets
@@ -1138,13 +1138,13 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
             </span>
             . Optional: link Google for Cloud Firestore persistence across devices.
           </p>
-          <button
-            type="button"
-            onClick={() => void signInWithGoogle()}
-            className="min-h-[36px] px-3 py-1.5 font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            Optional: Link Google
-          </button>
+<button
+              type="button"
+              onClick={() => void signInWithGoogle()}
+              className="min-h-[36px] px-3 py-1.5 font-semibold text-slate-800 bg-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Optional: Link Google
+            </button>
         </section>
       )}
 
@@ -1167,7 +1167,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             {/* Left: Market Identity, Status & Two Massive Host Controls */}
-            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col justify-between gap-5 sm:gap-6">
+            <div className="lg:col-span-7 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 sm:p-6 flex flex-col justify-between gap-5 sm:gap-6">
               <div className="space-y-4">
                 {/* Quiet unboxed metadata line */}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">

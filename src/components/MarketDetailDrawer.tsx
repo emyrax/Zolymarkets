@@ -84,7 +84,7 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18 }}
             onClick={onClose}
-            className="fixed inset-0 bg-slate-900/35 backdrop-blur-[1px]"
+            className="fixed inset-0 bg-[var(--bg-canvas)]/35 backdrop-blur-[1px]"
           />
 
           <motion.aside
@@ -93,7 +93,7 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
             exit={{ x: '100%' }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             aria-label="Market details"
-            className="relative z-10 w-full max-w-xl bg-white h-full border-l border-slate-200 overflow-y-auto flex flex-col"
+            className="relative z-10 w-full max-w-xl bg-[var(--bg-surface)] h-full border-l border-[var(--border-subtle)] overflow-y-auto flex flex-col"
           >
             <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200 flex items-start justify-between gap-3 sm:gap-4">
               <div className="space-y-1 min-w-0">
@@ -126,21 +126,21 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                   CPMM Reserve State
                 </h3>
                 <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 sm:gap-4">
-                  <div className="p-3.5 sm:p-4 border border-slate-200 rounded-lg bg-slate-50/50">
-                    <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span className="font-semibold text-emerald-700">YES Pool</span>
+                  <div className="p-3.5 sm:p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-surface)]/50">
+                    <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
+                      <span className="font-semibold text-[var(--accent-cyan)]">YES Pool</span>
                       <span className="font-mono tabular-nums">{market.yesProbability.toFixed(1)}%</span>
                     </div>
-                    <p className="mt-1 font-mono text-base font-semibold text-slate-900 tabular-nums">
+                    <p className="mt-1 font-mono text-base font-semibold text-[var(--text-primary)] tabular-nums">
                       {formatZec(market.outcomes.yes.poolZatoshis, 2)}
                     </p>
                   </div>
-                  <div className="p-3.5 sm:p-4 border border-slate-200 rounded-lg bg-slate-50/50">
-                    <div className="flex items-center justify-between text-xs text-slate-600">
-                      <span className="font-semibold text-rose-700">NO Pool</span>
+                  <div className="p-3.5 sm:p-4 border border-[var(--border-subtle)] rounded-lg bg-[var(--bg-surface)]/50">
+                    <div className="flex items-center justify-between text-xs text-[var(--text-muted)]">
+                      <span className="font-semibold text-[var(--accent-yellow)]">NO Pool</span>
                       <span className="font-mono tabular-nums">{market.noProbability.toFixed(1)}%</span>
                     </div>
-                    <p className="mt-1 font-mono text-base font-semibold text-slate-900 tabular-nums">
+                    <p className="mt-1 font-mono text-base font-semibold text-[var(--text-primary)] tabular-nums">
                       {formatZec(market.outcomes.no.poolZatoshis, 2)}
                     </p>
                   </div>
@@ -151,12 +151,12 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
               <SentimentTrendChart market={market} />
 
               {/* Resolution Criteria */}
-              <section className="space-y-2 pt-4 border-t border-slate-100">
-                <h3 className="text-xs font-semibold text-slate-500">
+              <section className="space-y-2 pt-4 border-t border-[var(--border-subtle)]">
+                <h3 className="text-xs font-semibold var(--text-muted)">
                   Resolution Criteria
                 </h3>
-                <p className="text-sm text-slate-700 leading-relaxed">{market.resolutionCriteria}</p>
-                <div className="pt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-mono tabular-nums">
+                <p className="text-sm var(--text-secondary) leading-relaxed">{market.resolutionCriteria}</p>
+                <div className="pt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs var(--text-muted) font-mono tabular-nums">
                   <span>Creator Fee: {(market.creatorFeeBps / 100).toFixed(2)}%</span>
                   <span aria-hidden="true">·</span>
                   <span>Status: {market.status.toUpperCase()}</span>

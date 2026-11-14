@@ -57,10 +57,10 @@ export const SchemaExplorer: React.FC = () => {
     <div className="space-y-10">
       {/* Intro */}
       <section className="space-y-2">
-        <h1 className="font-display text-2xl font-bold text-slate-900 tracking-tight">
+        <h1 className="font-display text-2xl font-bold var(--text-primary) tracking-tight">
           Google Firebase Architecture & Firestore Collections
         </h1>
-        <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">
+        <p className="text-sm var(--text-secondary) max-w-3xl leading-relaxed">
           Document model powered by Cloud Firestore with real-time `onSnapshot` market streaming,
           zero-trust `firestore.rules` with PII isolation, Google Sign-In authentication, and `zingo-cli` shielded bet ingestion.
         </p>
@@ -69,10 +69,10 @@ export const SchemaExplorer: React.FC = () => {
       {/* Firestore Collection Inspector */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h2 className="font-display text-lg font-semibold text-slate-900">
+          <h2 className="font-display text-lg font-semibold var(--text-primary)">
             Firestore Collections ({tables.length})
           </h2>
-          <div className="flex flex-nowrap sm:flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg overflow-x-auto no-scrollbar max-w-full">
+          <div className="flex flex-nowrap sm:flex-wrap items-center gap-1 p-1 bg-[var(--border-subtle)] rounded-lg overflow-x-auto no-scrollbar max-w-full">
             {tables.map((table) => {
               const active = table.name === currentCollection.name;
               return (
@@ -82,8 +82,8 @@ export const SchemaExplorer: React.FC = () => {
                   onClick={() => setSelectedCollection(table.name)}
                   className={`min-h-[36px] px-3 py-1.5 text-xs font-mono font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     active
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                      ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+                      : 'var(--text-secondary) hover:text-[var(--text-primary)]'}
                   }`}
                 >
                   {table.name}
@@ -112,32 +112,32 @@ export const SchemaExplorer: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
-                  <th className="py-2.5 px-4 sm:px-5">Field</th>
-                  <th className="py-2.5 px-4">Firestore Type</th>
-                  <th className="py-2.5 px-4">Rule Constraint</th>
-                  <th className="py-2.5 px-4 sm:px-5">Purpose</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {currentCollection.columns.map((col) => (
-                  <tr key={col.name} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
-                      {col.name}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-amber-800 whitespace-nowrap">
-                      {col.type}
-                    </td>
-                    <td className="py-2.5 px-4 font-mono text-slate-600 whitespace-nowrap">
-                      {col.constraints}
-                    </td>
-                    <td className="py-2.5 px-4 sm:px-5 text-slate-600 min-w-[200px]">{col.notes}</td>
+<table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/70 text-xs font-semibold text-[var(--text-secondary)]">
+                    <th className="py-2.5 px-4 sm:px-5">Field</th>
+                    <th className="py-2.5 px-4">Firestore Type</th>
+                    <th className="py-2.5 px-4">Rule Constraint</th>
+                    <th className="py-2.5 px-4 sm:px-5">Purpose</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)] text-xs">
+                  {currentCollection.columns.map((col) => (
+                    <tr key={col.name} className="hover:bg-[var(--bg-surface)-hover]">
+                      <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-[var(--text-primary)] whitespace-nowrap">
+                        {col.name}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-amber-800 whitespace-nowrap">
+                        {col.type}
+                      </td>
+                      <td className="py-2.5 px-4 font-mono text-[var(--text-muted)] whitespace-nowrap">
+                        {col.constraints}
+                      </td>
+                      <td className="py-2.5 px-4 sm:px-5 text-[var(--text-muted)] min-w-[200px]">{col.notes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
           </div>
         </div>
       </section>
@@ -149,28 +149,28 @@ export const SchemaExplorer: React.FC = () => {
         </h2>
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-semibold text-slate-500">
-                  <th className="py-2.5 px-4 sm:px-5">File / Endpoint</th>
-                  <th className="py-2.5 px-4">Responsibility</th>
-                  <th className="py-2.5 px-4 sm:px-5 text-right">Phase</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {PROJECT_MODULES.map((mod) => (
-                  <tr key={mod.path} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-slate-900 whitespace-nowrap">
-                      {mod.path}
-                    </td>
-                    <td className="py-2.5 px-4 text-slate-600 min-w-[200px]">{mod.role}</td>
-                    <td className="py-2.5 px-4 sm:px-5 text-right font-medium whitespace-nowrap text-emerald-700">
-                      {mod.phase}
-                    </td>
+<table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/70 text-xs font-semibold text-[var(--text-secondary)]">
+                    <th className="py-2.5 px-4 sm:px-5">File / Endpoint</th>
+                    <th className="py-2.5 px-4">Responsibility</th>
+                    <th className="py-2.5 px-4 sm:px-5 text-right">Phase</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)] text-xs">
+                  {PROJECT_MODULES.map((mod) => (
+                    <tr key={mod.path} className="hover:bg-[var(--bg-surface)-hover]">
+                      <td className="py-2.5 px-4 sm:px-5 font-mono font-medium text-[var(--text-primary)] whitespace-nowrap">
+                        {mod.path}
+                      </td>
+                      <td className="py-2.5 px-4 text-[var(--text-muted)] min-w-[200px]">{mod.role}</td>
+                      <td className="py-2.5 px-4 sm:px-5 text-right font-medium whitespace-nowrap text-[var(--accent-cyan)]">
+                        {mod.phase}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
           </div>
         </div>
       </section>
@@ -207,7 +207,7 @@ export const SchemaExplorer: React.FC = () => {
             type="button"
             onClick={handleCopyArtifact}
             disabled={!displayedCode}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium var(--text-secondary) bg-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-lg hover:border-[var(--accent-blue)] transition-colors cursor-pointer disabled:opacity-50"
           >
             {copiedArtifact ? (
               <>
@@ -223,7 +223,7 @@ export const SchemaExplorer: React.FC = () => {
           </button>
         </div>
 
-        <div className="bg-slate-950 text-slate-200 rounded-xl border border-slate-800 overflow-hidden">
+        <div className="bg-[var(--bg-surface)] text-slate-200 rounded-xl border border-[var(--border-subtle)] overflow-hidden">
           {loadingArtifacts ? (
             <div className="p-5 text-xs font-mono text-slate-400">
               Loading Firebase schema artifacts...

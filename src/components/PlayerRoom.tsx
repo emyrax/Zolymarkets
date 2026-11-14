@@ -741,15 +741,15 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         <button
           type="button"
           onClick={onBackToMarkets}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 min-h-[44px] cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium var(--text-secondary) hover:text-[var(--text-primary)] min-h-[44px] cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to Markets</span>
         </button>
-        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 animate-pulse">
-          <div className="h-4 w-40 bg-slate-200 rounded" />
-          <div className="h-7 w-3/4 bg-slate-200 rounded" />
-          <div className="h-40 w-full bg-slate-100 rounded" />
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-6 space-y-4 animate-pulse">
+          <div className="h-4 w-40 bg-[var(--border-subtle)] rounded" />
+          <div className="h-7 w-3/4 bg-[var(--border-subtle)] rounded" />
+          <div className="h-40 w-full bg-[var(--border-subtle)] rounded" />
         </div>
       </div>
     );
@@ -761,23 +761,23 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         <button
           type="button"
           onClick={onBackToMarkets}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 min-h-[44px] cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs font-medium var(--text-secondary) hover:text-[var(--text-primary)] min-h-[44px] cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to Markets</span>
         </button>
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3">
-          <AlertTriangle className="w-6 h-6 text-amber-600 mx-auto" aria-hidden="true" />
-          <h1 className="font-display text-xl font-bold text-slate-900">
+        <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-8 text-center space-y-3">
+          <AlertTriangle className="w-6 h-6 var(--accent-cyan) mx-auto" aria-hidden="true" />
+          <h1 className="font-display text-xl sm:text-3xl font-bold var(--text-primary)">
             Betting Room Not Found
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm var(--text-secondary)">
             {marketLoadError || `No market found for room ID "${roomId}".`}
           </p>
           <button
             type="button"
             onClick={onBackToMarkets}
-            className="px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 cursor-pointer"
+            className="px-4 py-2.5 text-xs font-semibold var(--text-primary) bg-[var(--border-subtle)] rounded-lg hover:bg-[rgba(59,130,246,0.1)] cursor-pointer"
           >
             Browse Open Markets
           </button>
@@ -876,10 +876,10 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       )}
 
       {/* Market Header Summary */}
-      <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+<section className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl p-4 sm:p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs var(--text-muted)">
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <span className="font-medium text-slate-700">{market.category}</span>
+            <span className="font-medium var(--text-secondary)">{market.category}</span>
             <span aria-hidden="true">·</span>
             <span className="truncate">@{market.creator.handle}</span>
             {market.creationTxid && (
@@ -889,7 +889,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                   href={getZcashTxExplorerUrls(market.creationTxid, market.shieldedPoolAddress).primaryUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-mono text-emerald-700 hover:text-emerald-800 underline underline-offset-2"
+                  className="inline-flex items-center gap-1 font-mono var(--accent-cyan) hover:text-[var(--accent-cyan)] underline underline-offset-2"
                 >
                   <span>Anchored {formatShortTxid(market.creationTxid, 6, 4)}</span>
                   <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -900,26 +900,26 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
           <MarketCountdown market={market} variant="card" />
         </div>
 
-        <h1 className="font-display text-xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
+        <h1 className="font-display text-xl sm:text-3xl font-bold var(--text-primary) [text-wrap:balance]">
           {market.question}
         </h1>
 
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 pt-3 border-t border-slate-100 font-mono tabular-nums">
+        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 pt-3 border-t border-[var(--border-subtle)] font-mono tabular-nums">
           <div className="min-w-0">
-            <p className="font-sans text-xs text-slate-500">YES Odds</p>
-            <p className="text-base sm:text-lg font-semibold text-emerald-700">
+            <p className="font-sans text-xs var(--text-muted)">YES Odds</p>
+            <p className="text-base sm:text-lg font-semibold var(--accent-cyan)">
               {market.yesProbability.toFixed(1)}%
             </p>
           </div>
           <div className="min-w-0">
-            <p className="font-sans text-xs text-slate-500">NO Odds</p>
-            <p className="text-base sm:text-lg font-semibold text-rose-700">
+            <p className="font-sans text-xs var(--text-muted)">NO Odds</p>
+            <p className="text-base sm:text-lg font-semibold var(--accent-yellow)">
               {market.noProbability.toFixed(1)}%
             </p>
           </div>
           <div className="min-w-0">
-            <p className="font-sans text-xs text-slate-500">Volume</p>
-            <p className="text-base sm:text-lg font-semibold text-slate-900 truncate">
+            <p className="font-sans text-xs var(--text-muted)">Volume</p>
+            <p className="text-base sm:text-lg font-semibold var(--text-primary) truncate">
               {formatZec(market.totalVolumeZatoshis, 2)}
             </p>
           </div>
@@ -928,11 +928,11 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
 
       {/* Locked / Resolved Banner */}
       {isBettingDisabled && (
-        <section className="p-4 sm:p-5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 text-sm text-amber-950">
+        <section className="p-4 sm:p-5 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-xl flex items-start gap-3 text-sm var(--text-secondary)">
           {market.status === MarketStatus.Resolved ? (
-            <Trophy className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
+            <Trophy className="w-5 h-5 var(--accent-cyan) shrink-0 mt-0.5" aria-hidden="true" />
           ) : (
-            <Lock className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
+            <Lock className="w-5 h-5 var(--accent-cyan) shrink-0 mt-0.5" aria-hidden="true" />
           )}
           <div className="space-y-1">
             <p className="font-semibold">
@@ -942,7 +942,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                 ? 'Betting is Locked'
                 : 'Market Cancelled'}
             </p>
-            <p className="text-xs text-amber-900">
+            <p className="text-xs var(--text-muted)">
               Betting inputs and QR payment generation are disabled while this market is{' '}
               {market.status.toUpperCase()}.
             </p>
@@ -965,16 +965,16 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
 
           {/* YES / NO Toggle */}
           <div className="space-y-1.5">
-            <span className="block text-xs font-medium text-slate-700">1. Select Outcome</span>
+            <span className="block text-xs font-medium var(--text-secondary)">1. Select Outcome</span>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 disabled={isBettingDisabled}
                 onClick={() => setSide(OutcomeSide.Yes)}
-                className={`min-h-[52px] px-4 py-3 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  side === OutcomeSide.Yes
-                    ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+className={`min-h-[52px] px-4 py-3 rounded-xl font-display text-base font-bold transition-colors duration-150 flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    side === OutcomeSide.Yes
+                      ? 'border-[var(--accent-cyan)] bg-[rgba(6,214,160,0.1)] text-[var(--accent-cyan)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent-cyan)]'}
                 }`}
               >
                 <span>YES</span>
@@ -987,10 +987,10 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                 type="button"
                 disabled={isBettingDisabled}
                 onClick={() => setSide(OutcomeSide.No)}
-                className={`min-h-[52px] px-4 py-3 rounded-xl border-2 font-display text-base font-bold transition-colors duration-150 flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  side === OutcomeSide.No
-                    ? 'border-rose-600 bg-rose-50 text-rose-900'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+className={`min-h-[52px] px-4 py-3 rounded-xl font-display text-base font-bold transition-colors duration-150 flex items-center justify-between cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    side === OutcomeSide.No
+                      ? 'border-[var(--accent-yellow)] bg-[rgba(234,179,8,0.1)] text-[var(--accent-yellow)]'
+                      : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:border-[var(--accent-cyan)]'}
                 }`}
               >
                 <span>NO</span>
@@ -1005,7 +1005,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
           <div className="space-y-2">
             <label
               htmlFor="player-bet-amount"
-              className="block text-xs font-medium text-slate-700"
+              className="block text-xs font-medium var(--text-secondary)"
             >
               2. Bet Amount (ZEC)
             </label>
@@ -1017,7 +1017,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               disabled={isBettingDisabled}
               value={amountInput}
               onChange={(e) => setAmountInput(e.target.value)}
-              className="w-full min-h-[48px] px-3.5 py-2.5 text-base font-mono tabular-nums bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full min-h-[48px] px-3.5 py-2.5 text-base font-mono tabular-nums bg-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-xl text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:bg-[var(--bg-surface)] disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <div className="grid grid-cols-2 min-[380px]:grid-cols-4 gap-2">
               {QUICK_AMOUNTS.map((preset) => (
@@ -1026,11 +1026,11 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                   type="button"
                   disabled={isBettingDisabled}
                   onClick={() => setAmountInput(preset)}
-                  className={`min-h-[40px] py-2 px-2 text-xs font-mono font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    amountInput === preset
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
-                  }`}
+className={`min-h-[40px] py-2 px-2 text-xs font-mono font-medium rounded-lg border transition-colors duration-150 whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                      amountInput === preset
+                        ? 'bg-[var(--bg-surface)] text-white border-[var(--border-subtle)]'
+                        : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-subtle)] hover:border-[var(--accent-blue)]'}
+                    }`}
                 >
                   {preset} ZEC
                 </button>
@@ -1047,7 +1047,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
           {/* Return Address Input (persisted in localStorage) */}
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <label htmlFor="player-return-addr" className="font-medium text-slate-700">
+              <label htmlFor="player-return-addr" className="font-medium var(--text-secondary)">
                 3. Your Return / Payout Address (utest1... / u1...)
               </label>
               <div className="flex items-center gap-2.5">
@@ -1077,10 +1077,10 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               value={returnAddr}
               onChange={(e) => setReturnAddr(e.target.value)}
               placeholder="u1... or utest1..."
-              className="w-full min-h-[48px] px-3.5 py-2.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full min-h-[48px] px-3.5 py-2.5 text-xs font-mono bg-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-xl text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-blue)] focus:bg-[var(--bg-surface)] disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {trimmedReturnAddr.length > 0 && !isReturnAddrValid && (
-              <p className="text-xs text-rose-700">
+              <p className="text-xs var(--accent-yellow)">
                 Enter a valid Zcash shielded address starting with u1, utest1, uregtest1, or zs1
                 (minimum 20 characters).
               </p>
@@ -1091,7 +1091,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         {/* Right: Dual Checkout Rail (ZIP-321 Shielded + Pollar Instant USDC) */}
         <section className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+            <div className="flex items-center gap-1 p-1 bg-[var(--border-subtle)] rounded-lg">
               <button
                 type="button"
                 onClick={() => setCheckoutRail('zcash')}
@@ -1116,12 +1116,12 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               </button>
             </div>
 
-            {checkoutRail === 'zcash' && (
+{checkoutRail === 'zcash' && (
               <button
                 type="button"
                 onClick={() => void handlePollMempool()}
                 disabled={pollingMempool}
-                className="min-h-[40px] px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                className="min-h-[40px] px-3 py-2 text-xs font-medium var(--text-secondary) bg-[var(--border-subtle)] border border-[var(--border-subtle)] rounded-lg hover:border-[var(--accent-blue)] inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw
                   className={`w-3.5 h-3.5 ${pollingMempool ? 'animate-spin' : ''}`}

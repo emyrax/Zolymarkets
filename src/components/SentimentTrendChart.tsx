@@ -363,23 +363,23 @@ const SentimentTooltip: React.FC<CustomTooltipProps> = ({ active, payload }) => 
   const point = payload[0].payload;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm text-xs space-y-1.5">
-      <p className="font-medium text-slate-900">{point.fullTime}</p>
+    <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg p-3 shadow-sm text-xs space-y-1.5">
+      <p className="font-medium var(--text-primary)">{point.fullTime}</p>
       <div className="space-y-1 font-mono tabular-nums">
         <div className="flex items-center justify-between gap-4">
-          <span className="text-emerald-700 font-semibold">YES</span>
-          <span className="text-slate-900">{point.yesProbability.toFixed(1)}%</span>
+          <span className="var(--accent-cyan) font-semibold">YES</span>
+          <span className="var(--text-secondary)">{point.yesProbability.toFixed(1)}%</span>
         </div>
         <div className="flex items-center justify-between gap-4">
-          <span className="text-rose-700 font-semibold">NO</span>
-          <span className="text-slate-900">{point.noProbability.toFixed(1)}%</span>
+          <span className="var(--accent-yellow) font-semibold">NO</span>
+          <span className="var(--text-secondary)">{point.noProbability.toFixed(1)}%</span>
         </div>
-        <div className="pt-1 border-t border-slate-100 flex items-center justify-between gap-4 text-slate-600">
+        <div className="pt-1 border-t border-[var(--border-subtle)] flex items-center justify-between gap-4 text-[var(--text-muted)]">
           <span className="font-sans">Cum. Volume</span>
           <span>{point.cumulativeVolumeZec.toFixed(3)} ZEC</span>
         </div>
         {point.betDeltaZec !== null && point.betSide && (
-          <div className="flex items-center justify-between gap-4 text-slate-500">
+          <div className="flex items-center justify-between gap-4 text-[var(--text-muted)]">
             <span className="font-sans">Bet Trigger</span>
             <span>
               +{point.betDeltaZec.toFixed(3)} ZEC on {point.betSide}
@@ -548,7 +548,7 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
     chartData.length > 0 ? chartData[chartData.length - 1].cumulativeVolumeZec : 0;
 
   return (
-    <section className="space-y-3 pt-4 border-t border-slate-100">
+    <section className="space-y-3 pt-4 border-t border-[var(--border-subtle)]">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5 sm:gap-3">
         <div className="space-y-0.5 min-w-0">
           <div className="flex items-center gap-2">
@@ -576,7 +576,7 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
-          <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg">
+<div className="inline-flex items-center p-0.5 bg-[var(--border-subtle)] rounded-lg">
             {TIMEFRAME_WINDOWS.map((win) => (
               <button
                 key={win.id}
@@ -584,10 +584,9 @@ export const SentimentTrendChart: React.FC<SentimentTrendChartProps> = ({ market
                 onClick={() => setTimeframe(win.id)}
                 className={`px-2 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   timeframe === win.id
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+                    : 'var(--text-secondary) hover:text-[var(--text-primary)]'}
                 }`}
-              >
                 {win.label}
               </button>
             ))}
