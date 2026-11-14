@@ -1,0 +1,414 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Shared Security Primitives
+    // -------------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'ekwuemesat@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isZcashAddress(addr) {
+      return addr is string &&
+        addr.size() >= 20 &&
+        addr.size() <= 256 &&
+        addr.matches('^(u1|uregtest1|utest1|zs1)[0-9a-zA-Z]+$');
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidUserPublic(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'photoUrl', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.uid.matches('^[a-zA-Z0-9_\\-]+$') && data.uid == userId &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 512)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.uid.matches('^[a-zA-Z0-9_\\-]+$') && data.uid == userId &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCreator(data) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'handle', 'displayName', 'bio',
+          'zcashUnifiedAddress', 'verified', 'marketsCreatedCount',
+          'totalVolumeZatoshis', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'ownerUid', 'handle', 'displayName', 'bio',
+          'zcashUnifiedAddress', 'verified', 'marketsCreatedCount',
+          'totalVolumeZatoshis', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.ownerUid) &&
+        data.handle is string && data.handle.size() >= 2 && data.handle.size() <= 40 &&
+        data.handle.matches('^[a-zA-Z0-9_]+$') &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.bio is string && data.bio.size() <= 400 &&
+        isZcashAddress(data.zcashUnifiedAddress) &&
+        data.verified is bool &&
+        data.marketsCreatedCount is int && data.marketsCreatedCount >= 0 &&
+        data.totalVolumeZatoshis is int && data.totalVolumeZatoshis >= 0 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidMarket(data) {
+      return data.keys().hasAll([
+          'id', 'slug', 'creatorId', 'ownerUid', 'question', 'description',
+          'resolutionCriteria', 'category', 'status', 'shieldedPoolAddress',
+          'creatorFeeBps', 'yesPoolZatoshis', 'noPoolZatoshis',
+          'yesSharesOutstanding', 'noSharesOutstanding',
+          'totalVolumeZatoshis', 'liquidityZatoshis', 'yesProbability24hAgo',
+          'closesAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'slug', 'creatorId', 'ownerUid', 'question', 'description',
+          'resolutionCriteria', 'category', 'status', 'shieldedPoolAddress',
+          'creatorFeeBps', 'yesPoolZatoshis', 'noPoolZatoshis',
+          'yesSharesOutstanding', 'noSharesOutstanding',
+          'totalVolumeZatoshis', 'liquidityZatoshis', 'yesProbability24hAgo',
+          'winningOutcome', 'duration', 'closesAt', 'resolvedAt', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.slug is string && data.slug.size() >= 3 && data.slug.size() <= 128 &&
+        data.slug.matches('^[a-z0-9\\-]+$') &&
+        isValidId(data.creatorId) &&
+        isValidId(data.ownerUid) &&
+        data.question is string && data.question.size() >= 10 && data.question.size() <= 280 &&
+        data.description is string && data.description.size() >= 1 && data.description.size() <= 1000 &&
+        data.resolutionCriteria is string && data.resolutionCriteria.size() >= 10 && data.resolutionCriteria.size() <= 2000 &&
+        data.category in ['Zcash Protocol', 'Privacy & Crypto', 'Governance', 'Ecosystem', 'Creator Bets'] &&
+        data.status in ['open', 'locked', 'resolved', 'cancelled'] &&
+        isZcashAddress(data.shieldedPoolAddress) &&
+        data.creatorFeeBps is int && data.creatorFeeBps >= 0 && data.creatorFeeBps <= 1000 &&
+        data.yesPoolZatoshis is int && data.yesPoolZatoshis > 0 &&
+        data.noPoolZatoshis is int && data.noPoolZatoshis > 0 &&
+        data.yesSharesOutstanding is number && data.yesSharesOutstanding >= 0 &&
+        data.noSharesOutstanding is number && data.noSharesOutstanding >= 0 &&
+        data.totalVolumeZatoshis is int && data.totalVolumeZatoshis >= 0 &&
+        data.liquidityZatoshis is int && data.liquidityZatoshis >= 0 &&
+        data.yesProbability24hAgo is number && data.yesProbability24hAgo >= 0 && data.yesProbability24hAgo <= 100 &&
+        (!('winningOutcome' in data) || data.winningOutcome == null || data.winningOutcome in ['YES', 'NO']) &&
+        (!('duration' in data) || data.duration == null || (data.duration is number && data.duration >= 0.0013 && data.duration <= 87600)) &&
+        data.closesAt is string && data.closesAt.size() >= 10 && data.closesAt.size() <= 64 &&
+        (!('resolvedAt' in data) || data.resolvedAt == null || (data.resolvedAt is string && data.resolvedAt.size() <= 64)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidShieldedBet(data) {
+      return data.keys().hasAll([
+          'id', 'marketId', 'txid', 'poolType', 'recipientAddress',
+          'pick', 'payoutTo', 'amountZatoshis', 'rawMemoHex',
+          'decodedMemo', 'confirmations', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'marketId', 'txid', 'poolType', 'recipientAddress',
+          'pick', 'payoutTo', 'amountZatoshis', 'rawMemoHex',
+          'decodedMemo', 'confirmations', 'createdAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.marketId) &&
+        data.txid is string && data.txid.size() >= 16 && data.txid.size() <= 128 &&
+        data.txid.matches('^[0-9a-fA-F]+$') &&
+        data.poolType in ['orchard', 'sapling'] &&
+        isZcashAddress(data.recipientAddress) &&
+        data.pick in ['YES', 'NO'] &&
+        isZcashAddress(data.payoutTo) &&
+        data.amountZatoshis is int && data.amountZatoshis > 0 &&
+        data.rawMemoHex is string && data.rawMemoHex.size() <= 1028 &&
+        data.decodedMemo is map &&
+        data.decodedMemo.keys().hasAll(['q', 'pick', 'payout_to']) &&
+        data.decodedMemo.keys().hasOnly(['q', 'pick', 'payout_to']) &&
+        data.confirmations is int && data.confirmations >= 0 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidShieldedTransaction(data) {
+      return data.keys().hasAll([
+          'id', 'marketId', 'side', 'zip321Uri', 'memoPayload',
+          'amountZatoshis', 'status', 'confirmations', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'marketId', 'side', 'txid', 'zip321Uri', 'memoPayload',
+          'amountZatoshis', 'status', 'confirmations', 'createdAt', 'confirmedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.marketId) &&
+        data.side in ['YES', 'NO'] &&
+        (!('txid' in data) || data.txid == null || (data.txid is string && data.txid.size() <= 128)) &&
+        data.zip321Uri is string && data.zip321Uri.size() >= 10 && data.zip321Uri.size() <= 1500 &&
+        data.memoPayload is string && data.memoPayload.size() >= 1 && data.memoPayload.size() <= 512 &&
+        data.amountZatoshis is int && data.amountZatoshis > 0 &&
+        data.status in ['pending', 'confirmed', 'settled', 'refunded'] &&
+        data.confirmations is int && data.confirmations >= 0 &&
+        data.createdAt is timestamp &&
+        (!('confirmedAt' in data) || data.confirmedAt == null || data.confirmedAt is timestamp);
+    }
+
+    function isValidPosition(data) {
+      return data.keys().hasAll([
+          'id', 'marketId', 'ownerUid', 'side', 'traderCommitment',
+          'shares', 'costBasisZatoshis', 'claimed', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'marketId', 'ownerUid', 'side', 'traderCommitment',
+          'payoutAddress', 'shares', 'costBasisZatoshis', 'claimed',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.marketId) &&
+        isValidId(data.ownerUid) &&
+        data.side in ['YES', 'NO'] &&
+        data.traderCommitment is string && data.traderCommitment.size() >= 4 && data.traderCommitment.size() <= 128 &&
+        (!('payoutAddress' in data) || data.payoutAddress == null || isZcashAddress(data.payoutAddress)) &&
+        data.shares is number && data.shares > 0 &&
+        data.costBasisZatoshis is int && data.costBasisZatoshis > 0 &&
+        data.claimed is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, write: if false;
+    }
+
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list, write: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserPublic(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUserPublic(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoUrl', 'updatedAt']);
+      allow delete: if false;
+
+      match /private/info {
+        allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+        allow list: if false;
+        allow create: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isOwner(userId) &&
+          isValidUserPrivate(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isOwner(userId) &&
+          isValidUserPrivate(incoming(), userId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    match /creators/{creatorId} {
+      allow get: if isValidId(creatorId);
+      allow list: if true;
+      allow create: if isVerifiedUser() &&
+        isValidId(creatorId) &&
+        isValidCreator(incoming()) &&
+        incoming().id == creatorId &&
+        incoming().createdAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            incoming().ownerUid == request.auth.uid &&
+            incoming().verified == false &&
+            incoming().marketsCreatedCount == 0 &&
+            incoming().totalVolumeZatoshis == 0
+          )
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(creatorId) &&
+        isValidCreator(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'verified', 'marketsCreatedCount', 'totalVolumeZatoshis', 'displayName', 'bio', 'zcashUnifiedAddress'
+            ])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'bio', 'zcashUnifiedAddress'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    match /markets/{marketId} {
+      allow get: if isValidId(marketId);
+      allow list: if true;
+      allow create: if isVerifiedUser() &&
+        isValidId(marketId) &&
+        isValidMarket(incoming()) &&
+        incoming().id == marketId &&
+        (isAdmin() || (incoming().ownerUid == request.auth.uid && incoming().status == 'open')) &&
+        exists(/databases/$(database)/documents/creators/$(incoming().creatorId)) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(marketId) &&
+        isValidMarket(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().creatorId == existing().creatorId &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (existing().status in ['open', 'locked'] || isAdmin()) &&
+        (
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'winningOutcome', 'resolvedAt', 'yesPoolZatoshis',
+              'noPoolZatoshis', 'yesSharesOutstanding', 'noSharesOutstanding',
+              'totalVolumeZatoshis', 'liquidityZatoshis', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['description', 'resolutionCriteria', 'updatedAt'])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            existing().status == 'open' &&
+            incoming().status == 'locked' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            existing().status in ['open', 'locked'] &&
+            incoming().status == 'resolved' &&
+            incoming().winningOutcome in ['YES', 'NO'] &&
+            incoming().resolvedAt is string &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'winningOutcome', 'resolvedAt', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    match /shielded_bets/{betId} {
+      allow get: if isValidId(betId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(betId) &&
+        isValidShieldedBet(incoming()) &&
+        incoming().id == betId &&
+        exists(/databases/$(database)/documents/markets/$(incoming().marketId)) &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /shielded_transactions/{txId} {
+      allow get: if isValidId(txId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(txId) &&
+        isValidShieldedTransaction(incoming()) &&
+        incoming().id == txId &&
+        exists(/databases/$(database)/documents/markets/$(incoming().marketId)) &&
+        incoming().createdAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(txId) &&
+        isValidShieldedTransaction(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().marketId == existing().marketId &&
+        incoming().createdAt == existing().createdAt &&
+        existing().status == 'pending' &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'txid', 'confirmations', 'confirmedAt']);
+      allow delete: if false;
+    }
+
+    match /positions/{positionId} {
+      allow get: if isValidId(positionId) && isSignedIn() && (existing().ownerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(positionId) &&
+        isValidPosition(incoming()) &&
+        incoming().id == positionId &&
+        (isAdmin() || incoming().ownerUid == request.auth.uid) &&
+        exists(/databases/$(database)/documents/markets/$(incoming().marketId)) &&
+        incoming().claimed == false &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(positionId) &&
+        isValidPosition(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().marketId == existing().marketId &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['claimed', 'shares', 'costBasisZatoshis', 'updatedAt']);
+      allow delete: if false;
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Zolymarket",
+  "description": "Creator-driven prediction market for Zcash with shielded ZIP-321 payment requests and real-time market updates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

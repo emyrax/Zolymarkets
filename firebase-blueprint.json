@@ -1,0 +1,501 @@
+{
+  "entities": {
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Public non-PII user identity summary stored at /users/{userId}.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "createdAt", "updatedAt"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Isolated PII document stored at /users/{userId}/private/info.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "Creator": {
+      "title": "Creator",
+      "description": "Zcash prediction market creator profile with Unified Address fee attribution.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "bio": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "zcashUnifiedAddress": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 256,
+          "pattern": "^(u1|uregtest1|utest1|zs1)[0-9a-zA-Z]+$"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "marketsCreatedCount": {
+          "type": "integer"
+        },
+        "totalVolumeZatoshis": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "handle",
+        "displayName",
+        "bio",
+        "zcashUnifiedAddress",
+        "verified",
+        "marketsCreatedCount",
+        "totalVolumeZatoshis",
+        "createdAt"
+      ]
+    },
+    "Market": {
+      "title": "Market",
+      "description": "Binary prediction market with CPMM pool reserves in integer zatoshis.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9\\-]+$"
+        },
+        "creatorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 280
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "resolutionCriteria": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Zcash Protocol",
+            "Privacy & Crypto",
+            "Governance",
+            "Ecosystem",
+            "Creator Bets"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "locked", "resolved", "cancelled"]
+        },
+        "shieldedPoolAddress": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 256,
+          "pattern": "^(u1|uregtest1|utest1|zs1)[0-9a-zA-Z]+$"
+        },
+        "creatorFeeBps": {
+          "type": "integer"
+        },
+        "yesPoolZatoshis": {
+          "type": "integer"
+        },
+        "noPoolZatoshis": {
+          "type": "integer"
+        },
+        "yesSharesOutstanding": {
+          "type": "number"
+        },
+        "noSharesOutstanding": {
+          "type": "number"
+        },
+        "totalVolumeZatoshis": {
+          "type": "integer"
+        },
+        "liquidityZatoshis": {
+          "type": "integer"
+        },
+        "yesProbability24hAgo": {
+          "type": "number"
+        },
+        "winningOutcome": {
+          "type": "string",
+          "enum": ["YES", "NO"]
+        },
+        "duration": {
+          "type": "number",
+          "description": "Lock period duration in hours from market creation (supports down to 5 seconds)."
+        },
+        "closesAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resolvedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "slug",
+        "creatorId",
+        "ownerUid",
+        "question",
+        "description",
+        "resolutionCriteria",
+        "category",
+        "status",
+        "shieldedPoolAddress",
+        "creatorFeeBps",
+        "yesPoolZatoshis",
+        "noPoolZatoshis",
+        "yesSharesOutstanding",
+        "noSharesOutstanding",
+        "totalVolumeZatoshis",
+        "liquidityZatoshis",
+        "yesProbability24hAgo",
+        "closesAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ShieldedBet": {
+      "title": "ShieldedBet",
+      "description": "Decoded unspent Orchard/Sapling note ingested from zingo-cli notes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "marketId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "txid": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[0-9a-fA-F]+$"
+        },
+        "poolType": {
+          "type": "string",
+          "enum": ["orchard", "sapling"]
+        },
+        "recipientAddress": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 256
+        },
+        "pick": {
+          "type": "string",
+          "enum": ["YES", "NO"]
+        },
+        "payoutTo": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 256
+        },
+        "amountZatoshis": {
+          "type": "integer"
+        },
+        "rawMemoHex": {
+          "type": "string",
+          "maxLength": 1028
+        },
+        "decodedMemo": {
+          "type": "object"
+        },
+        "confirmations": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "marketId",
+        "txid",
+        "poolType",
+        "recipientAddress",
+        "pick",
+        "payoutTo",
+        "amountZatoshis",
+        "rawMemoHex",
+        "decodedMemo",
+        "confirmations",
+        "createdAt"
+      ]
+    },
+    "ShieldedTransaction": {
+      "title": "ShieldedTransaction",
+      "description": "ZIP-321 payment request intent and confirmation status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "marketId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "side": {
+          "type": "string",
+          "enum": ["YES", "NO"]
+        },
+        "txid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "zip321Uri": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1500
+        },
+        "memoPayload": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "amountZatoshis": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "settled", "refunded"]
+        },
+        "confirmations": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "confirmedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "marketId",
+        "side",
+        "zip321Uri",
+        "memoPayload",
+        "amountZatoshis",
+        "status",
+        "confirmations",
+        "createdAt"
+      ]
+    },
+    "Position": {
+      "title": "Position",
+      "description": "Trader outcome shares indexed by shielded commitment and optional owner UID.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "marketId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "side": {
+          "type": "string",
+          "enum": ["YES", "NO"]
+        },
+        "traderCommitment": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 128
+        },
+        "payoutAddress": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "shares": {
+          "type": "number"
+        },
+        "costBasisZatoshis": {
+          "type": "integer"
+        },
+        "claimed": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "marketId",
+        "ownerUid",
+        "side",
+        "traderCommitment",
+        "shares",
+        "costBasisZatoshis",
+        "claimed",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublic" },
+      "description": "Public user identity summary without PII."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Isolated user PII (email) accessible only to the owner or verified admin."
+    },
+    "/creators/{creatorId}": {
+      "schema": { "$ref": "#/entities/Creator" },
+      "description": "Zcash market creators and unified payout addresses."
+    },
+    "/markets/{marketId}": {
+      "schema": { "$ref": "#/entities/Market" },
+      "description": "Binary prediction markets with CPMM pool reserves and real-time listener support."
+    },
+    "/shielded_bets/{betId}": {
+      "schema": { "$ref": "#/entities/ShieldedBet" },
+      "description": "Confirmed shielded notes decoded from zingo-cli notes."
+    },
+    "/shielded_transactions/{txId}": {
+      "schema": { "$ref": "#/entities/ShieldedTransaction" },
+      "description": "ZIP-321 payment intents and settlement statuses."
+    },
+    "/positions/{positionId}": {
+      "schema": { "$ref": "#/entities/Position" },
+      "description": "Owner-scoped outcome share positions."
+    }
+  }
+}
