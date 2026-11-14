@@ -1,9 +1,11 @@
 /**
- * Zolymarket — ZIP-321 QR Code Scanner Overlay
+ * Zolymarket — Scan-to-Upload & Scan-to-Checkout QR Modal
  *
- * Allows users in the Market list view to scan a ZIP-321 payment URI,
- * bare Zcash shielded address (u1.../utest1.../zs1...), or room QR code
- * via live camera, QR image upload, or paste to join the matching room.
+ * Allows users to scan a Zcash ZIP-321 QR, Polygon EIP-681 URI, JSON bet ticket,
+ * shielded address, or room URL via live camera, QR image upload, or paste.
+ * Automatically extracts every field (`marketId`, `pick`, `amount`, `payout_to`,
+ * `poolAddress`, `txid`), saves return info, uploads bet/position data, and
+ * launches directly into checkout.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -25,16 +27,24 @@ import {
   getDocs,
   limit,
   query,
+  serverTimestamp,
+  setDoc,
   where,
 } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext.tsx';
+import { estimateSharesOut, zecToZatoshis } from '../lib/cpmm.ts';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase.ts';
-import { buildZip321Uri, parseZip321Input, ParsedZip321Scan } from '../lib/zip321.ts';
+import { buildZip321Uri, parseZip321Input, ParsedZip321Scan, utf8ToHex } from '../lib/zip321.ts';
 import { MarketWithDetails, OutcomeSide } from '../types/database.ts';
 
 export interface Zip321RoomPrefill {
   side?: OutcomeSide;
   amountZec?: number;
   returnAddr?: string;
+  rail?: 'zcash' | 'pollar';
+  txid?: string;
+  scannedAt?: string;
+  uploaded?: boolean;
 }
 
 interface Zip321ScannerModalProps {
@@ -42,6 +52,7 @@ interface Zip321ScannerModalProps {
   markets: MarketWithDetails[];
   onClose: () => void;
   onJoinRoom: (marketId: string, prefill?: Zip321RoomPrefill) => void;
+  onBetUploaded?: () => void;
 }
 
 interface BarcodeDetectorLike {
@@ -51,8 +62,17 @@ interface BarcodeDetectorLike {
 interface MatchedResolution {
   marketId: string;
   question: string;
+  market?: MarketWithDetails;
   address?: string;
   parsed: ParsedZip321Scan;
+}
+
+function generatePreviewHexTxid(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
@@ -60,13 +80,15 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
   markets,
   onClose,
   onJoinRoom,
+  onBetUploaded,
 }) => {
+  const { user, walletSession, connectZcashWallet, connectPolygonAddress } = useAuth();
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
-  const joinTimerRef = useRef<number | null>(null);
   const resolvingRef = useRef<boolean>(false);
 
   const [cameraActive, setCameraActive] = useState<boolean>(false);
@@ -79,6 +101,15 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
   const [scanError, setScanError] = useState<string | null>(null);
   const [resolving, setResolving] = useState<boolean>(false);
   const [matched, setMatched] = useState<MatchedResolution | null>(null);
+
+  // Editable extracted fields so scanned bet payload uploads completely before checkout
+  const [extractedPick, setExtractedPick] = useState<OutcomeSide>(OutcomeSide.Yes);
+  const [extractedAmount, setExtractedAmount] = useState<string>('0.5');
+  const [extractedReturnAddr, setExtractedReturnAddr] = useState<string>('');
+  const [extractedTxid, setExtractedTxid] = useState<string>('');
+  const [extractedRail, setExtractedRail] = useState<'zcash' | 'pollar'>('zcash');
+  const [uploadingCheckout, setUploadingCheckout] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const stopCamera = useCallback(() => {
     if (rafRef.current !== null) {
@@ -97,46 +128,39 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
     setCameraActive(false);
   }, []);
 
-  const clearTimers = useCallback(() => {
-    if (joinTimerRef.current !== null) {
-      window.clearTimeout(joinTimerRef.current);
-      joinTimerRef.current = null;
-    }
-  }, []);
-
   const resolveMarketFromPayload = useCallback(
     async (rawPayload: string) => {
       if (resolvingRef.current) return;
       const trimmed = rawPayload.trim();
       if (!trimmed) {
-        setScanError('Scan or paste a ZIP-321 URI (zcash:u1...) or shielded address.');
+        setScanError('Scan or paste a ZIP-321 URI (zcash:u1...), Polygon URI, or shielded address.');
         return;
       }
 
       resolvingRef.current = true;
       setResolving(true);
       setScanError(null);
+      setUploadError(null);
 
       try {
         const parsed = parseZip321Input(trimmed);
 
-        // Allow plain market IDs / slugs as a convenience fallback
         const directIdMatch = markets.find(
           (m) => m.id === trimmed || m.slug.toLowerCase() === trimmed.toLowerCase()
         );
 
+        let matchedMarket: MarketWithDetails | undefined = directIdMatch;
         let matchedMarketId: string | null = directIdMatch?.id ?? null;
         let matchedQuestion: string = directIdMatch?.question ?? '';
 
         if (!matchedMarketId && !parsed) {
           setScanError(
-            'Unrecognized QR payload. Expected a ZIP-321 URI (zcash:u1...), Zcash shielded address, or room link.'
+            'Unrecognized QR payload. Expected a ZIP-321 URI (zcash:u1...), Polygon URI, JSON bet ticket, or room link.'
           );
           return;
         }
 
         if (!matchedMarketId && parsed) {
-          // 1. Match by marketId extracted from ZIP-321 memo or room URL (exact, slug, or 8-char prefix)
           if (parsed.marketId) {
             const byId = markets.find(
               (m) =>
@@ -145,18 +169,19 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
                 (parsed.marketId && m.id.startsWith(parsed.marketId))
             );
             if (byId) {
+              matchedMarket = byId;
               matchedMarketId = byId.id;
               matchedQuestion = byId.question;
             }
           }
 
-          // 2. Match by shielded pool address or creator unified address in loaded markets
           if (!matchedMarketId && parsed.address) {
             const needle = parsed.address.toLowerCase();
             const byPool = markets.find(
               (m) => m.shieldedPoolAddress.toLowerCase() === needle
             );
             if (byPool) {
+              matchedMarket = byPool;
               matchedMarketId = byPool.id;
               matchedQuestion = byPool.question;
             } else {
@@ -164,13 +189,13 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
                 (m) => m.creator.zcashUnifiedAddress.toLowerCase() === needle
               );
               if (byCreator) {
+                matchedMarket = byCreator;
                 matchedMarketId = byCreator.id;
                 matchedQuestion = byCreator.question;
               }
             }
           }
 
-          // 3. Query Cloud Firestore directly if not matched in current memory slice
           if (!matchedMarketId && parsed.marketId) {
             const targetId = parsed.marketId;
             if (/^[a-zA-Z0-9_-]{1,128}$/.test(targetId)) {
@@ -185,7 +210,7 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
                 try {
                   handleFirestoreError(err, OperationType.GET, `markets/${targetId}`);
                 } catch {
-                  // Continue to address lookup fallback
+                  // Continue fallback
                 }
               }
             }
@@ -209,8 +234,18 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
               try {
                 handleFirestoreError(err, OperationType.LIST, 'markets');
               } catch {
-                // Report unmatched cleanly below
+                // Report unmatched below
               }
+            }
+          }
+
+          // Fallback to first open market when scanning a bare Polygon 0x address / user wallet QR
+          if (!matchedMarketId && (parsed.kind === 'polygon_address' || parsed.kind === 'polygon_uri')) {
+            const fallbackMarket = markets.find((m) => m.status === 'open') ?? markets[0];
+            if (fallbackMarket) {
+              matchedMarket = fallbackMarket;
+              matchedMarketId = fallbackMarket.id;
+              matchedQuestion = fallbackMarket.question;
             }
           }
         }
@@ -218,7 +253,7 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
         if (!matchedMarketId) {
           setScanError(
             parsed?.address
-              ? `Valid ZIP-321 / Zcash address (${parsed.address.slice(0, 16)}...), but no active prediction market matches it.`
+              ? `Valid address (${parsed.address.slice(0, 16)}...), but no active prediction market matches it.`
               : 'No prediction market matched the scanned QR code.'
           );
           return;
@@ -230,34 +265,182 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
           marketId: matchedMarketId,
         };
 
+        const defaultReturn = (() => {
+          if (effectiveParsed.returnAddr) return effectiveParsed.returnAddr;
+          if (walletSession?.address) return walletSession.address;
+          try {
+            return localStorage.getItem('zolymarket_player_return_addr_v1') || '';
+          } catch {
+            return '';
+          }
+        })();
+
+        const resolvedRail: 'zcash' | 'pollar' =
+          effectiveParsed.rail === 'polygon' || walletSession?.rail === 'polygon'
+            ? 'pollar'
+            : 'zcash';
+
         stopCamera();
+        setExtractedPick(effectiveParsed.pick ?? OutcomeSide.Yes);
+        setExtractedAmount(
+          String(effectiveParsed.amountZec ?? effectiveParsed.amountToken ?? 0.5)
+        );
+        setExtractedReturnAddr(defaultReturn);
+        setExtractedTxid(effectiveParsed.txid ?? '');
+        setExtractedRail(resolvedRail);
+
         setMatched({
           marketId: matchedMarketId,
           question: matchedQuestion || `Market ${matchedMarketId}`,
-          address: effectiveParsed.address,
+          market: matchedMarket,
+          address: effectiveParsed.address ?? matchedMarket?.shieldedPoolAddress,
           parsed: effectiveParsed,
         });
-
-        const prefill: Zip321RoomPrefill | undefined =
-          effectiveParsed.pick || effectiveParsed.amountZec || effectiveParsed.returnAddr
-            ? {
-                side: effectiveParsed.pick,
-                amountZec: effectiveParsed.amountZec,
-                returnAddr: effectiveParsed.returnAddr,
-              }
-            : undefined;
-
-        clearTimers();
-        joinTimerRef.current = window.setTimeout(() => {
-          onJoinRoom(matchedMarketId as string, prefill);
-        }, 450);
       } finally {
         resolvingRef.current = false;
         setResolving(false);
       }
     },
-    [markets, stopCamera, clearTimers, onJoinRoom]
+    [markets, stopCamera, walletSession]
   );
+
+  const handleUploadAndCheckout = async () => {
+    if (!matched) return;
+    setUploadError(null);
+    setUploadingCheckout(true);
+
+    try {
+      const parsedAmt = Number.parseFloat(extractedAmount);
+      const safeAmt = Number.isFinite(parsedAmt) && parsedAmt > 0 ? parsedAmt : 0.5;
+      const cleanReturn = extractedReturnAddr.trim();
+      const cleanTxid = extractedTxid.trim();
+
+      // 1. Persist return address & link wallet identity if valid
+      if (cleanReturn) {
+        try {
+          if (/^(u1|utest1|uregtest1|zs1)[0-9a-zA-Z]{16,252}$/.test(cleanReturn)) {
+            localStorage.setItem('zolymarket_player_return_addr_v1', cleanReturn);
+            if (!walletSession) {
+              connectZcashWallet(cleanReturn, 'Scanned Zcash Wallet');
+            }
+          } else if (/^0x[a-fA-F0-9]{40}$/.test(cleanReturn) && !walletSession) {
+            connectPolygonAddress(cleanReturn, 'Scanned Polygon Wallet');
+          }
+        } catch {
+          // Ignore non-fatal storage/session auto-link errors
+        }
+      }
+
+      // 2. Persist scanned bet ticket history locally
+      try {
+        const key = 'zolymarket_scanned_checkouts_v1';
+        const existing = JSON.parse(localStorage.getItem(key) || '[]') as unknown[];
+        const nextEntry = {
+          marketId: matched.marketId,
+          pick: extractedPick,
+          amount: safeAmt,
+          rail: extractedRail,
+          returnAddr: cleanReturn,
+          txid: cleanTxid || null,
+          scannedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(key, JSON.stringify([nextEntry, ...existing].slice(0, 20)));
+      } catch {
+        // Ignore storage quota errors
+      }
+
+      // 3. Upload position record to Cloud Firestore `positions` when authenticated with Google
+      const amountZatoshis = zecToZatoshis(safeAmt);
+      if (user) {
+        const posId = `pos_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        const yesPool = matched.market?.outcomes.yes.poolZatoshis ?? 500_000_000;
+        const noPool = matched.market?.outcomes.no.poolZatoshis ?? 500_000_000;
+        const quote = estimateSharesOut({
+          amountZatoshis,
+          targetPoolZatoshis: extractedPick === OutcomeSide.Yes ? yesPool : noPool,
+          oppositePoolZatoshis: extractedPick === OutcomeSide.Yes ? noPool : yesPool,
+          creatorFeeBps: matched.market?.creatorFeeBps ?? 150,
+        });
+        const commitmentSource = cleanTxid || cleanReturn || user.uid;
+        const traderCommitment = commitmentSource.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'scan_bet';
+        const validZcashPayout = /^(u1|utest1|uregtest1|zs1)[0-9a-zA-Z]{16,252}$/.test(cleanReturn);
+
+        try {
+          await setDoc(doc(db, 'positions', posId), {
+            id: posId,
+            marketId: matched.marketId,
+            ownerUid: user.uid,
+            side: extractedPick,
+            traderCommitment,
+            ...(validZcashPayout ? { payoutAddress: cleanReturn } : {}),
+            shares: Math.max(0.0001, quote.sharesOut),
+            costBasisZatoshis: amountZatoshis,
+            claimed: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          try {
+            handleFirestoreError(err, OperationType.CREATE, `positions/${posId}`);
+          } catch {
+            // Do not block checkout room entry if optional position upload requires verification
+          }
+        }
+      }
+
+      // 4. Upload verified bet payload to Express `/api/markets/:id/bets` when txid is provided
+      let uploadedToLedger = false;
+      if (cleanTxid && /^[0-9a-fA-F]{16,128}$/.test(cleanTxid)) {
+        const recipientAddr =
+          matched.address ||
+          matched.market?.shieldedPoolAddress ||
+          'utest1placeholder000000000000000000000000';
+        const payoutTarget = cleanReturn || recipientAddr;
+        const memoHex = utf8ToHex(
+          JSON.stringify({
+            q: matched.marketId,
+            pick: extractedPick,
+            payout_to: payoutTarget,
+          })
+        ).slice(0, 1024);
+
+        const res = await fetch(`/api/markets/${encodeURIComponent(matched.marketId)}/bets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            txid: cleanTxid,
+            poolType: 'orchard',
+            recipientAddress: recipientAddr,
+            pick: extractedPick,
+            payoutTo: payoutTarget,
+            amountZatoshis,
+            rawMemoHex: memoHex,
+            confirmations: 1,
+          }),
+        });
+        if (res.ok) {
+          uploadedToLedger = true;
+          onBetUploaded?.();
+        }
+      }
+
+      onJoinRoom(matched.marketId, {
+        side: extractedPick,
+        amountZec: safeAmt,
+        returnAddr: cleanReturn || undefined,
+        rail: extractedRail,
+        txid: cleanTxid || undefined,
+        scannedAt: new Date().toISOString(),
+        uploaded: uploadedToLedger || Boolean(user),
+      });
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Unable to upload scanned bet payload.'
+      );
+    } finally {
+      setUploadingCheckout(false);
+    }
+  };
 
   const startCamera = useCallback(
     async (overrideDeviceId?: string, overrideFacing?: 'environment' | 'user') => {
@@ -266,7 +449,9 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
         !navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia
       ) {
-        setCameraError('Camera access is unavailable in this browser context. Upload a QR image or paste a ZIP-321 URI below.');
+        setCameraError(
+          'Camera access is unavailable in this browser context. Upload a QR image or paste a ZIP-321 / Polygon URI below.'
+        );
         return;
       }
 
@@ -300,14 +485,14 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
             const activeId = activeTrack?.getSettings().deviceId;
             if (activeId) setSelectedDeviceId(activeId);
           } catch {
-            // Non-fatal if device enumeration fails
+            // Non-fatal
           }
         }
       } catch (err) {
         const msg =
           err instanceof Error && err.name === 'NotAllowedError'
-            ? 'Camera permission was denied. Allow camera access or upload/paste a ZIP-321 QR code below.'
-            : 'No live camera detected. Upload a QR image or paste a ZIP-321 URI below.';
+            ? 'Camera permission was denied. Allow camera access or upload/paste a bet QR below.'
+            : 'No live camera detected. Upload a QR image or paste a bet QR payload below.';
         setCameraError(msg);
         setCameraActive(false);
       }
@@ -315,24 +500,21 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
     [facingMode, stopCamera]
   );
 
-  // Start camera when modal opens, clean up on close/unmount
   useEffect(() => {
     if (!isOpen) {
       stopCamera();
-      clearTimers();
       setMatched(null);
       setScanError(null);
+      setUploadError(null);
       return;
     }
 
     void startCamera();
     return () => {
       stopCamera();
-      clearTimers();
     };
-  }, [isOpen, startCamera, stopCamera, clearTimers]);
+  }, [isOpen, startCamera, stopCamera]);
 
-  // Escape key dismissal
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -344,7 +526,6 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isOpen, onClose]);
 
-  // Continuous QR frame decode loop while camera stream is active
   useEffect(() => {
     if (!isOpen || !cameraActive || matched) return;
 
@@ -378,7 +559,7 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
                 detectedText = first.rawValue;
               }
             } catch {
-              // Fall through to jsQR canvas decode
+              // Fallback to jsQR
             }
           }
 
@@ -528,10 +709,10 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
                 id="zip321-scanner-title"
                 className="font-display text-base font-semibold text-slate-900 truncate"
               >
-                Scan ZIP-321 Market QR
+                Scan Bet QR · Upload &amp; Checkout
               </h2>
               <p className="text-xs text-slate-500 truncate">
-                Point camera at a Zcash ZIP-321 QR code or shielded address to join directly
+                Scan a ZIP-321 or Polygon QR to extract all fields, upload, and check out
               </p>
             </div>
           </div>
@@ -546,199 +727,325 @@ export const Zip321ScannerModal: React.FC<Zip321ScannerModalProps> = ({
           </button>
         </div>
 
-        {/* Camera / Upload Scanner Viewport */}
         <div className="p-4 sm:p-5 space-y-4 sm:space-y-5">
-          <div
-            className="relative aspect-[4/3] w-full bg-slate-950 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const dropped = e.dataTransfer.files?.[0] ?? null;
-              void handleImageUpload(dropped);
-            }}
-          >
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
-            />
-            <canvas ref={canvasRef} className="hidden" />
-
-            {/* Viewfinder Corner Brackets when camera is streaming */}
-            {cameraActive && !matched && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="relative w-52 h-52 sm:w-56 sm:h-56">
-                  <span className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-amber-400 rounded-tl-md" />
-                  <span className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-amber-400 rounded-tr-md" />
-                  <span className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-amber-400 rounded-bl-md" />
-                  <span className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-amber-400 rounded-br-md" />
+          {matched ? (
+            /* Scanned Bet Extracted -> Review, Upload Everything & Proceed to Checkout */
+            <div className="space-y-4">
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-xs font-semibold text-emerald-900">
+                    Scanned Bet Extracted &amp; Ready for Checkout
+                  </p>
+                  <p className="text-sm font-medium text-slate-900 leading-snug">
+                    {matched.question}
+                  </p>
                 </div>
               </div>
-            )}
 
-            {/* Matched Success Overlay */}
-            {matched && (
-              <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 text-center space-y-3">
-                <CheckCircle2 className="w-10 h-10 text-emerald-400" aria-hidden="true" />
-                <div className="space-y-1 max-w-sm">
-                  <p className="font-display text-base font-semibold text-white">
-                    Market Room Matched
-                  </p>
-                  <p className="text-xs text-slate-300 line-clamp-2">{matched.question}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExtractedPick(OutcomeSide.Yes)}
+                  className={`min-h-[44px] py-2 px-3 rounded-lg border text-xs font-semibold cursor-pointer ${
+                    extractedPick === OutcomeSide.Yes
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-slate-700 border-slate-200'
+                  }`}
+                >
+                  Pick YES
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExtractedPick(OutcomeSide.No)}
+                  className={`min-h-[44px] py-2 px-3 rounded-lg border text-xs font-semibold cursor-pointer ${
+                    extractedPick === OutcomeSide.No
+                      ? 'bg-rose-600 text-white border-rose-600'
+                      : 'bg-white text-slate-700 border-slate-200'
+                  }`}
+                >
+                  Pick NO
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-slate-700">
+                    Stake Amount ({extractedRail === 'zcash' ? 'ZEC' : 'USDC'})
+                  </span>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0.0001"
+                    value={extractedAmount}
+                    onChange={(e) => setExtractedAmount(e.target.value)}
+                    className="w-full min-h-[44px] px-3 py-2 text-sm font-mono tabular-nums bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  />
+                </label>
+
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-slate-700 block">
+                    Checkout Rail
+                  </span>
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setExtractedRail('zcash')}
+                      className={`min-h-[36px] text-xs font-semibold rounded-md cursor-pointer ${
+                        extractedRail === 'zcash'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      Zcash ZEC
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExtractedRail('pollar')}
+                      className={`min-h-[36px] text-xs font-semibold rounded-md cursor-pointer ${
+                        extractedRail === 'pollar'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      Pollar / Polygon
+                    </button>
+                  </div>
                 </div>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-slate-700">
+                  Return Payout Address ({extractedRail === 'zcash' ? 'u1... / utest1...' : '0x... / u1...'})
+                </span>
+                <input
+                  type="text"
+                  value={extractedReturnAddr}
+                  onChange={(e) => setExtractedReturnAddr(e.target.value)}
+                  placeholder="u1... or utest1... or 0x..."
+                  className="w-full min-h-[44px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                />
+              </label>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="scanned-txid" className="text-xs font-medium text-slate-700">
+                    Optional Paid TxID / Receipt Hash (Uploads Immediately)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setExtractedTxid(generatePreviewHexTxid())}
+                    className="text-xs font-medium text-amber-700 hover:text-amber-800 cursor-pointer"
+                  >
+                    Generate Preview TxID
+                  </button>
+                </div>
+                <input
+                  id="scanned-txid"
+                  type="text"
+                  value={extractedTxid}
+                  onChange={(e) => setExtractedTxid(e.target.value)}
+                  placeholder="Leave blank to sign in Zashi / Polygon at next step"
+                  className="w-full min-h-[44px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                />
+              </div>
+
+              {uploadError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+                  {uploadError}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={uploadingCheckout}
+                  onClick={() => void handleUploadAndCheckout()}
+                  className="flex-1 min-h-[48px] px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                >
+                  {uploadingCheckout
+                    ? 'Uploading Scanned Bet...'
+                    : 'Upload Everything & Go to Checkout'}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
-                    clearTimers();
-                    onJoinRoom(matched.marketId, {
-                      side: matched.parsed.pick,
-                      amountZec: matched.parsed.amountZec,
-                      returnAddr: matched.parsed.returnAddr,
-                    });
+                    setMatched(null);
+                    setScanError(null);
+                    void startCamera();
                   }}
-                  className="min-h-[40px] px-4 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors cursor-pointer"
+                  className="min-h-[48px] px-4 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:border-slate-300 rounded-lg transition-colors cursor-pointer"
                 >
-                  Open Room Now
+                  Rescan
                 </button>
               </div>
-            )}
+            </div>
+          ) : (
+            <>
+              <div
+                className="relative aspect-[4/3] w-full bg-slate-950 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const dropped = e.dataTransfer.files?.[0] ?? null;
+                  void handleImageUpload(dropped);
+                }}
+              >
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
+                />
+                <canvas ref={canvasRef} className="hidden" />
 
-            {/* Camera Unavailable / Idle Fallback */}
-            {!cameraActive && !matched && (
-              <div className="p-6 text-center space-y-3 max-w-xs">
-                <Camera className="w-8 h-8 text-slate-400 mx-auto" aria-hidden="true" />
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {cameraError || 'Initializing camera stream for ZIP-321 QR scanning...'}
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => void startCamera()}
-                    className="min-h-[40px] px-3.5 py-2 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>Retry Camera</span>
-                  </button>
+                {cameraActive && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <div className="relative w-52 h-52 sm:w-56 sm:h-56">
+                      <span className="absolute top-0 left-0 w-7 h-7 border-t-2 border-l-2 border-amber-400 rounded-tl-md" />
+                      <span className="absolute top-0 right-0 w-7 h-7 border-t-2 border-r-2 border-amber-400 rounded-tr-md" />
+                      <span className="absolute bottom-0 left-0 w-7 h-7 border-b-2 border-l-2 border-amber-400 rounded-bl-md" />
+                      <span className="absolute bottom-0 right-0 w-7 h-7 border-b-2 border-r-2 border-amber-400 rounded-br-md" />
+                    </div>
+                  </div>
+                )}
+
+                {!cameraActive && (
+                  <div className="p-6 text-center space-y-3 max-w-xs">
+                    <Camera className="w-8 h-8 text-slate-400 mx-auto" aria-hidden="true" />
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {cameraError || 'Initializing camera stream for QR bet scanning...'}
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => void startCamera()}
+                        className="min-h-[40px] px-3.5 py-2 text-xs font-semibold text-slate-900 bg-white hover:bg-slate-100 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Retry Camera</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="min-h-[40px] px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      >
+                        <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Upload QR Image</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Camera Controls Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="min-h-[40px] px-3.5 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                   >
-                    <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+                    <Upload className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
                     <span>Upload QR Image</span>
                   </button>
+
+                  {cameraActive && (
+                    <button
+                      type="button"
+                      onClick={handleSwitchCamera}
+                      className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                    >
+                      <SwitchCamera className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                      <span>Switch Camera</span>
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
 
-          {/* Camera Controls Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              >
-                <Upload className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                <span>Upload QR Image</span>
-              </button>
-
-              {cameraActive && (
-                <button
-                  type="button"
-                  onClick={handleSwitchCamera}
-                  className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-                >
-                  <SwitchCamera className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                  <span>Switch Camera</span>
-                </button>
-              )}
-            </div>
-
-            {markets.length > 0 && (
-              <button
-                type="button"
-                onClick={handleUseSampleZip321}
-                className="min-h-[40px] px-3 py-2 text-xs font-medium text-amber-800 hover:text-amber-900 cursor-pointer whitespace-nowrap"
-              >
-                Insert Sample ZIP-321
-              </button>
-            )}
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const selected = e.target.files?.[0] ?? null;
-              e.target.value = '';
-              void handleImageUpload(selected);
-            }}
-          />
-
-          {scanError && (
-            <div
-              role="alert"
-              className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-800"
-            >
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
-              <div className="flex-1 space-y-1">
-                <p>{scanError}</p>
-                {!cameraActive && (
+                {markets.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setScanError(null);
-                      void startCamera();
-                    }}
-                    className="font-semibold underline hover:text-rose-950 cursor-pointer"
+                    onClick={handleUseSampleZip321}
+                    className="min-h-[40px] px-3 py-2 text-xs font-medium text-amber-800 hover:text-amber-900 cursor-pointer whitespace-nowrap"
                   >
-                    Scan another QR code
+                    Insert Sample ZIP-321
                   </button>
                 )}
               </div>
-            </div>
-          )}
 
-          {/* Direct Paste Fallback */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void resolveMarketFromPayload(manualInput);
-            }}
-            className="pt-4 border-t border-slate-100 space-y-2"
-          >
-            <label
-              htmlFor="zip321-manual-input"
-              className="block text-xs font-medium text-slate-700"
-            >
-              Or paste ZIP-321 URI / Shielded Address (`zcash:u1...` or `u1...`)
-            </label>
-            <div className="flex flex-col min-[380px]:flex-row items-stretch gap-2">
               <input
-                id="zip321-manual-input"
-                type="text"
-                value={manualInput}
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
                 onChange={(e) => {
-                  setManualInput(e.target.value);
-                  if (scanError) setScanError(null);
+                  const selected = e.target.files?.[0] ?? null;
+                  e.target.value = '';
+                  void handleImageUpload(selected);
                 }}
-                placeholder="zcash:u1...?amount=0.5&memo=..."
-                className="flex-1 min-h-[44px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
               />
-              <button
-                type="submit"
-                disabled={resolving || !manualInput.trim()}
-                className="min-h-[44px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+
+              {scanError && (
+                <div
+                  role="alert"
+                  className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2.5 text-xs text-rose-800"
+                >
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
+                  <div className="flex-1 space-y-1">
+                    <p>{scanError}</p>
+                    {!cameraActive && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScanError(null);
+                          void startCamera();
+                        }}
+                        className="font-semibold underline hover:text-rose-950 cursor-pointer"
+                      >
+                        Scan another QR code
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Direct Paste Fallback */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void resolveMarketFromPayload(manualInput);
+                }}
+                className="pt-4 border-t border-slate-100 space-y-2"
               >
-                {resolving ? 'Matching...' : 'Join Room'}
-              </button>
-            </div>
-          </form>
+                <label
+                  htmlFor="zip321-manual-input"
+                  className="block text-xs font-medium text-slate-700"
+                >
+                  Or paste ZIP-321 URI, Polygon URI, or Shielded Address
+                </label>
+                <div className="flex flex-col min-[380px]:flex-row items-stretch gap-2">
+                  <input
+                    id="zip321-manual-input"
+                    type="text"
+                    value={manualInput}
+                    onChange={(e) => {
+                      setManualInput(e.target.value);
+                      if (scanError) setScanError(null);
+                    }}
+                    placeholder="zcash:u1...?amount=0.5&memo=..."
+                    className="flex-1 min-h-[44px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={resolving || !manualInput.trim()}
+                    className="min-h-[44px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    {resolving ? 'Extracting...' : 'Scan & Extract'}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </div>

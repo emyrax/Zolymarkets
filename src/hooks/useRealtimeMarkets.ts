@@ -163,15 +163,21 @@ export function useRealtimeMarkets(): UseRealtimeMarketsResult {
 
   const firestoreActive = firestoreMarketDocs.length > 0 && firestoreCreators.length > 0;
 
-  const creators = firestoreActive ? firestoreCreators : bootstrapCreators;
+  const creators = firestoreActive
+    ? [
+        ...firestoreCreators,
+        ...bootstrapCreators.filter(
+          (bc) => !firestoreCreators.some((fc) => fc.id === bc.id)
+        ),
+      ]
+    : bootstrapCreators;
 
-  const markets: MarketWithDetails[] = firestoreActive
+  const mappedFirestoreMarkets: MarketWithDetails[] = firestoreActive
     ? firestoreMarketDocs.map((d) => {
         const id = String(d.id);
         const creatorId = String(d.creatorId);
         const creator =
-          firestoreCreators.find((c) => c.id === creatorId) ??
-          bootstrapCreators.find((c) => c.id === creatorId) ?? {
+          creators.find((c) => c.id === creatorId) ?? {
             id: creatorId,
             handle: 'creator',
             displayName: 'Zcash Creator',
@@ -238,6 +244,15 @@ export function useRealtimeMarkets(): UseRealtimeMarketsResult {
           change24hPct,
         };
       })
+    : [];
+
+  const markets: MarketWithDetails[] = firestoreActive
+    ? [
+        ...bootstrapMarkets.filter(
+          (bm) => !mappedFirestoreMarkets.some((fm) => fm.id === bm.id)
+        ),
+        ...mappedFirestoreMarkets,
+      ]
     : bootstrapMarkets;
 
   return {

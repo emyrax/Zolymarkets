@@ -144,19 +144,22 @@ export function decodeBase64Url(input: string): string {
 }
 
 export interface ParsedZip321Scan {
-  kind: 'zip321' | 'zcash_address' | 'room_url';
+  kind: 'zip321' | 'zcash_address' | 'room_url' | 'polygon_uri' | 'polygon_address' | 'json_bet';
   raw: string;
+  rail?: 'zcash' | 'polygon';
   address?: string;
   amountZec?: number;
+  amountToken?: number;
   marketId?: string;
   pick?: OutcomeSide;
   returnAddr?: string;
+  txid?: string;
   memoDecoded?: string;
 }
 
 /**
  * Parses a scanned QR string or pasted ZIP-321 URI, raw shielded Zcash address,
- * or Zolymarket room link so the UI can resolve and open the target market room.
+ * Polygon EIP-681 URI / 0x address, JSON bet ticket, or Zolymarket room link.
  */
 export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
   const trimmed = rawInput.trim();
@@ -205,6 +208,7 @@ export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
     let marketId: string | undefined;
     let pick: OutcomeSide | undefined;
     let returnAddr: string | undefined;
+    let txid: string | undefined;
     let memoDecoded: string | undefined;
 
     const memoB64 = params.get('memo');
@@ -217,6 +221,7 @@ export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
             q?: unknown;
             pick?: unknown;
             payout_to?: unknown;
+            txid?: unknown;
           };
           if (typeof parsedJson.q === 'string' && parsedJson.q.trim()) {
             marketId = parsedJson.q.trim();
@@ -226,6 +231,9 @@ export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
           }
           if (typeof parsedJson.payout_to === 'string' && parsedJson.payout_to.trim()) {
             returnAddr = parsedJson.payout_to.trim();
+          }
+          if (typeof parsedJson.txid === 'string' && parsedJson.txid.trim()) {
+            txid = parsedJson.txid.trim();
           }
         } else if (memoDecoded.startsWith('zolymarket:v1|')) {
           // Check Phase 1/2 pipe format: zolymarket:v1|m=<id>|s=<YES|NO>|c=<commitment>
@@ -247,21 +255,133 @@ export function parseZip321Input(rawInput: string): ParsedZip321Scan | null {
       return {
         kind: 'zip321',
         raw: trimmed,
+        rail: 'zcash',
         address: address || undefined,
         amountZec,
         marketId,
         pick,
         returnAddr,
+        txid,
         memoDecoded,
       };
     }
   }
 
-  // 3. Bare shielded Zcash address (u1..., utest1..., uregtest1..., zs1...)
+  // 3. Polygon / EVM EIP-681 payment URI (ethereum:0x... or polygon:0x...)
+  if (/^(ethereum|polygon):/i.test(trimmed)) {
+    const withoutScheme = trimmed.replace(/^(ethereum|polygon):/i, '').replace(/^\/\//, '');
+    const qIdx = withoutScheme.indexOf('?');
+    const addrPart = (qIdx >= 0 ? withoutScheme.slice(0, qIdx) : withoutScheme).split('@')[0].trim();
+    const queryStr = qIdx >= 0 ? withoutScheme.slice(qIdx + 1) : '';
+    const params = new URLSearchParams(queryStr);
+    const marketId = params.get('market') || params.get('q') || undefined;
+    const rawPick = params.get('pick')?.toUpperCase();
+    const pick =
+      rawPick === OutcomeSide.Yes
+        ? OutcomeSide.Yes
+        : rawPick === OutcomeSide.No
+        ? OutcomeSide.No
+        : undefined;
+    const amountStr = params.get('amount') || params.get('uint256');
+    const amountParsed = amountStr ? Number.parseFloat(amountStr) : undefined;
+    const amountToken =
+      amountParsed !== undefined && Number.isFinite(amountParsed) && amountParsed > 0
+        ? amountParsed
+        : undefined;
+
+    if (/^0x[a-fA-F0-9]{40}$/.test(addrPart)) {
+      return {
+        kind: 'polygon_uri',
+        raw: trimmed,
+        rail: 'polygon',
+        address: addrPart,
+        amountToken,
+        marketId: marketId || undefined,
+        pick,
+        returnAddr: params.get('payout_to') || undefined,
+      };
+    }
+  }
+
+  // 4. Raw JSON bet payload (e.g. copied from Zashi memo or Polygon ticket)
+  if (trimmed.startsWith('{')) {
+    try {
+      const obj = JSON.parse(trimmed) as {
+        q?: unknown;
+        marketId?: unknown;
+        pick?: unknown;
+        payout_to?: unknown;
+        address?: unknown;
+        amount?: unknown;
+        txid?: unknown;
+      };
+      const marketId =
+        typeof obj.q === 'string' && obj.q.trim()
+          ? obj.q.trim()
+          : typeof obj.marketId === 'string' && obj.marketId.trim()
+          ? obj.marketId.trim()
+          : undefined;
+      const pick =
+        obj.pick === OutcomeSide.Yes
+          ? OutcomeSide.Yes
+          : obj.pick === OutcomeSide.No
+          ? OutcomeSide.No
+          : undefined;
+      const returnAddr =
+        typeof obj.payout_to === 'string' && obj.payout_to.trim()
+          ? obj.payout_to.trim()
+          : undefined;
+      const address =
+        typeof obj.address === 'string' && obj.address.trim() ? obj.address.trim() : undefined;
+      const parsedJsonAmount =
+        typeof obj.amount === 'number'
+          ? obj.amount
+          : typeof obj.amount === 'string'
+          ? Number.parseFloat(obj.amount)
+          : undefined;
+      const amountZec =
+        parsedJsonAmount !== undefined &&
+        Number.isFinite(parsedJsonAmount) &&
+        parsedJsonAmount > 0
+          ? parsedJsonAmount
+          : undefined;
+      const txid = typeof obj.txid === 'string' && obj.txid.trim() ? obj.txid.trim() : undefined;
+
+      if (marketId || address || returnAddr) {
+        return {
+          kind: 'json_bet',
+          raw: trimmed,
+          rail: returnAddr?.startsWith('0x') ? 'polygon' : 'zcash',
+          address,
+          amountZec,
+          marketId,
+          pick,
+          returnAddr,
+          txid,
+          memoDecoded: trimmed,
+        };
+      }
+    } catch {
+      // Ignore malformed JSON
+    }
+  }
+
+  // 5. Bare shielded Zcash address (u1..., utest1..., uregtest1..., zs1...)
   if (isValidShieldedRecipient(trimmed) && trimmed.length >= 20) {
     return {
       kind: 'zcash_address',
       raw: trimmed,
+      rail: 'zcash',
+      address: trimmed,
+    };
+  }
+
+  // 6. Bare Polygon EVM address (0x...)
+  if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+    return {
+      kind: 'polygon_address',
+      raw: trimmed,
+      rail: 'polygon',
       address: trimmed,
     };
   }

@@ -40,6 +40,7 @@ import {
 } from '../lib/cpmm.ts';
 import { buildPlayerBetZip321Uri } from '../lib/zip321.ts';
 import { buildPollarPaymentParams } from '../lib/pollar-assets.ts';
+import { useAuth } from '../contexts/AuthContext.tsx';
 import { usePollarBridge } from '../contexts/PollarBridgeProvider.tsx';
 import { useChains, usePollar } from '@pollar/react';
 import { WalletChain } from '@pollar/core';
@@ -62,6 +63,7 @@ interface PlayerRoomProps {
   creators: Creator[];
   initialPrefill?: Zip321RoomPrefill | null;
   onBackToMarkets: () => void;
+  onOpenScanner?: () => void;
 }
 
 const RETURN_ADDRESS_STORAGE_KEY = 'zolymarket_player_return_addr_v1';
@@ -84,7 +86,9 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
   creators,
   initialPrefill,
   onBackToMarkets,
+  onOpenScanner,
 }) => {
+  const { walletSession, openAuthModal } = useAuth();
   const [firestoreMarket, setFirestoreMarket] = useState<MarketWithDetails | null>(null);
   const [apiMarket, setApiMarket] = useState<MarketWithDetails | null>(null);
   const [loadingMarket, setLoadingMarket] = useState<boolean>(true);
@@ -97,6 +101,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
   );
   const [returnAddr, setReturnAddr] = useState<string>(() => {
     if (initialPrefill?.returnAddr) return initialPrefill.returnAddr;
+    if (walletSession?.rail === 'zcash') return walletSession.address;
     try {
       return localStorage.getItem(RETURN_ADDRESS_STORAGE_KEY) || '';
     } catch {
@@ -115,9 +120,13 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
   const [pollNote, setPollNote] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Pollar Multichain Instant Settlement Rail
-  const [checkoutRail, setCheckoutRail] = useState<'zcash' | 'pollar'>('zcash');
-  const [pollarChain, setPollarChain] = useState<WalletChain>('STELLAR');
+  // Pollar & Polygon Settlement Rail
+  const [checkoutRail, setCheckoutRail] = useState<'zcash' | 'pollar'>(
+    initialPrefill?.rail === 'pollar' || walletSession?.rail === 'polygon' ? 'pollar' : 'zcash'
+  );
+  const [pollarChain, setPollarChain] = useState<WalletChain>(
+    walletSession?.rail === 'polygon' ? 'POLYGON' : 'STELLAR'
+  );
   const [pollarDestination, setPollarDestination] = useState<string>('');
   const [pollarAmount, setPollarAmount] = useState<string>('5.00');
   const [pollarSending, setPollarSending] = useState<boolean>(false);
@@ -127,7 +136,12 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
     hash?: string;
   } | null>(null);
 
-  const { publishableConfigured, targetNetwork } = usePollarBridge();
+  const {
+    publishableConfigured,
+    targetNetwork,
+    pollarAuthError,
+    clearPollarAuthError,
+  } = usePollarBridge();
   const {
     isAuthenticated: pollarAuthed,
     network: pollarNetwork,
@@ -142,7 +156,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
   const initializedBetsRef = useRef<boolean>(false);
   const seenBetIdsRef = useRef<Set<string>>(new Set());
 
-  // Persist returnAddr in localStorage on change
+  // Persist returnAddr in localStorage on change & sync Zcash wallet session
   useEffect(() => {
     try {
       localStorage.setItem(RETURN_ADDRESS_STORAGE_KEY, returnAddr);
@@ -150,6 +164,12 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       // Ignore storage quota / privacy mode errors
     }
   }, [returnAddr]);
+
+  useEffect(() => {
+    if (walletSession?.rail === 'zcash' && !returnAddr.trim()) {
+      setReturnAddr(walletSession.address);
+    }
+  }, [walletSession, returnAddr]);
 
   // Match from already-loaded markets list (supports id or slug)
   const listMatchedMarket = useMemo(
@@ -626,7 +646,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         </div>
       )}
 
-      {/* Top Back Navigation & Room ID */}
+      {/* Top Back Navigation, Scan-to-Checkout & Room ID */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
@@ -637,10 +657,47 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
           <span>Back to Markets</span>
         </button>
 
-        <span className="text-xs font-mono text-slate-500 truncate max-w-full">
-          Room: {market.id}
-        </span>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onOpenScanner && (
+            <button
+              type="button"
+              onClick={onOpenScanner}
+              className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 rounded-lg cursor-pointer"
+            >
+              Scan Bet QR
+            </button>
+          )}
+          <span className="text-xs font-mono text-slate-500 truncate max-w-full">
+            Room: {market.id}
+          </span>
+        </div>
       </div>
+
+      {/* Scanned Bet Upload Confirmation Banner */}
+      {initialPrefill?.scannedAt && (
+        <section className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-950">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">
+                Scanned Bet Loaded &amp; Ready for Checkout ({initialPrefill.side || side} ·{' '}
+                {initialPrefill.amountZec ?? validAmount}{' '}
+                {checkoutRail === 'zcash' ? 'ZEC' : 'USDC'})
+              </p>
+              <p className="text-emerald-800">
+                {initialPrefill.uploaded
+                  ? 'Bet payload uploaded and saved locally. Sign below to complete settlement.'
+                  : 'All scanned QR fields applied below. Sign with Zashi or Pollar / Polygon to check out.'}
+              </p>
+            </div>
+          </div>
+          {initialPrefill.txid && (
+            <span className="font-mono text-[11px] text-emerald-800 truncate max-w-[220px]">
+              tx: {initialPrefill.txid}
+            </span>
+          )}
+        </section>
+      )}
 
       {/* Market Header Summary */}
       <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
@@ -847,7 +904,7 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Pollar USDC
+                Pollar / Polygon
               </button>
             </div>
 
@@ -977,28 +1034,87 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                 </div>
               )}
 
-              {!pollarAuthed ? (
+              {pollarAuthError && (
+                <div
+                  role="alert"
+                  className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 break-words"
+                >
+                  {pollarAuthError}
+                </div>
+              )}
+
+              {!pollarAuthed && walletSession?.rail !== 'polygon' ? (
                 <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                   <p className="text-xs text-slate-600">
-                    Sign in with Google, Email OTP, or Passkey to unlock your multichain USDC
-                    wallet.
+                    Sign in via Pollar social login or connect your Polygon wallet to submit USDC
+                    settlement transfers.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={!publishableConfigured || isBettingDisabled}
-                      onClick={() => pollarLogin({ provider: 'google' })}
+                      disabled={isBettingDisabled}
+                      onClick={() => openAuthModal('polygon')}
                       className="min-h-[44px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg cursor-pointer"
                     >
-                      Continue with Google
+                      Sign in with Polygon / Pollar
                     </button>
                     <button
                       type="button"
                       disabled={!publishableConfigured || isBettingDisabled}
-                      onClick={() => openPollarLogin()}
+                      onClick={() => {
+                        clearPollarAuthError();
+                        pollarLogin({ provider: 'google' });
+                      }}
+                      className="min-h-[44px] px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 rounded-lg cursor-pointer"
+                    >
+                      Pollar Google
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!publishableConfigured || isBettingDisabled}
+                      onClick={() => {
+                        clearPollarAuthError();
+                        openPollarLogin();
+                      }}
                       className="min-h-[44px] px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 rounded-lg cursor-pointer"
                     >
                       Email / Passkey
+                    </button>
+                  </div>
+                </div>
+              ) : !pollarAuthed && walletSession?.rail === 'polygon' ? (
+                <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold text-slate-900">Polygon Wallet Connected</span>
+                    <span className="font-mono text-slate-600 truncate max-w-[180px]">
+                      {walletSession.address}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Generate a Polygon EIP-681 payment link or connect Pollar Social for sponsored
+                    USDC checkout.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={`polygon:${
+                        /^0x[a-fA-F0-9]{40}$/.test(pollarDestination.trim())
+                          ? pollarDestination.trim()
+                          : walletSession.address
+                      }?amount=${encodeURIComponent(pollarAmount || '5')}&market=${encodeURIComponent(
+                        market.id
+                      )}&pick=${encodeURIComponent(side)}&payout_to=${encodeURIComponent(
+                        walletSession.address
+                      )}`}
+                      className="min-h-[44px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg inline-flex items-center justify-center"
+                    >
+                      Open Polygon Wallet Checkout
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('polygon')}
+                      className="min-h-[44px] px-4 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 rounded-lg cursor-pointer"
+                    >
+                      Pollar Social Sign-In
                     </button>
                   </div>
                 </div>

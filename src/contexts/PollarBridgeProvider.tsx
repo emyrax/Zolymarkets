@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { PollarClient, StellarNetwork } from '@pollar/core';
+import { PollarClient, PollarLogger, StellarNetwork } from '@pollar/core';
 import { PollarConfig, PollarProvider } from '@pollar/react';
 
 export interface PollarServerStatus {
@@ -27,6 +27,8 @@ interface PollarBridgeContextValue {
   storageDegraded: boolean;
   serverStatus: PollarServerStatus | null;
   statusLoading: boolean;
+  pollarAuthError: string | null;
+  clearPollarAuthError: () => void;
   refreshServerStatus: () => Promise<void>;
 }
 
@@ -44,6 +46,14 @@ const TARGET_NETWORK: StellarNetwork = rawNetwork === 'mainnet' ? 'mainnet' : 't
 
 const PUBLISHABLE_CONFIGURED =
   rawPublishableKey.length > 0 && !rawPublishableKey.startsWith('MY_');
+
+const POLLAR_SDK_BASE_URL =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname.endsWith('.run.app'))
+    ? `${window.location.origin}/api/pollar-sdk`
+    : undefined;
 
 const FALLBACK_POLLAR_CONFIG: PollarConfig = {
   application: {
@@ -75,11 +85,43 @@ const FALLBACK_POLLAR_CONFIG: PollarConfig = {
   },
 };
 
+function formatPollarErrorMessage(rawMessage?: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'this URL';
+  const detail = rawMessage ? ` (${rawMessage})` : '';
+  return `Pollar social sign-in could not start${detail}. Verify VITE_POLLAR_PUBLISHABLE_KEY and add ${origin} to Allowed Origins in dashboard.pollar.xyz — or sign in with Polygon Browser Wallet or Zcash right below.`;
+}
+
+const authErrorListeners = new Set<(message: string) => void>();
+
+const safePollarLogger: PollarLogger = {
+  error: (...args: unknown[]) => {
+    const first = typeof args[0] === 'string' ? args[0] : '';
+    const errArg = args.find((a) => a instanceof Error) as Error | undefined;
+    const isAuthOrFetchFailure =
+      first.includes('auth flow') ||
+      first.includes('/auth/') ||
+      (errArg?.message && errArg.message.toLowerCase().includes('fetch'));
+
+    if (isAuthOrFetchFailure) {
+      const msg = formatPollarErrorMessage(errArg?.message || first);
+      authErrorListeners.forEach((cb) => cb(msg));
+      console.warn(...args);
+      return;
+    }
+    console.warn(...args);
+  },
+  warn: (...args: unknown[]) => console.warn(...args),
+  info: (...args: unknown[]) => console.info(...args),
+  debug: (...args: unknown[]) => console.debug(...args),
+};
+
 const pollarClientSingleton = new PollarClient({
   apiKey: PUBLISHABLE_CONFIGURED ? rawPublishableKey : 'pollar_unconfigured_local',
+  baseUrl: POLLAR_SDK_BASE_URL,
   stellarNetwork: TARGET_NETWORK,
   confirmation: 'prompt',
   logLevel: PUBLISHABLE_CONFIGURED ? 'warn' : 'silent',
+  logger: safePollarLogger,
 });
 
 export const PollarBridgeProvider: React.FC<{ children: React.ReactNode }> = ({
@@ -88,6 +130,11 @@ export const PollarBridgeProvider: React.FC<{ children: React.ReactNode }> = ({
   const [storageDegraded, setStorageDegraded] = useState<boolean>(false);
   const [serverStatus, setServerStatus] = useState<PollarServerStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState<boolean>(true);
+  const [pollarAuthError, setPollarAuthError] = useState<string | null>(null);
+
+  const clearPollarAuthError = useCallback(() => {
+    setPollarAuthError(null);
+  }, []);
 
   const refreshServerStatus = useCallback(async () => {
     setStatusLoading(true);
@@ -108,6 +155,24 @@ export const PollarBridgeProvider: React.FC<{ children: React.ReactNode }> = ({
     void refreshServerStatus();
   }, [refreshServerStatus]);
 
+  useEffect(() => {
+    const onLoggerError = (msg: string) => setPollarAuthError(msg);
+    authErrorListeners.add(onLoggerError);
+
+    const unsubAuth = pollarClientSingleton.onAuthStateChange((state) => {
+      if (state.step === 'error') {
+        setPollarAuthError(formatPollarErrorMessage(state.message));
+      } else if (state.step === 'authenticated' || state.step === 'creating_session') {
+        setPollarAuthError(null);
+      }
+    });
+
+    return () => {
+      authErrorListeners.delete(onLoggerError);
+      unsubAuth();
+    };
+  }, []);
+
   return (
     <PollarBridgeContext.Provider
       value={{
@@ -116,6 +181,8 @@ export const PollarBridgeProvider: React.FC<{ children: React.ReactNode }> = ({
         storageDegraded,
         serverStatus,
         statusLoading,
+        pollarAuthError,
+        clearPollarAuthError,
         refreshServerStatus,
       }}
     >

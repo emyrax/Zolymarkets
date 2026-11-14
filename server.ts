@@ -447,6 +447,82 @@ async function startServer() {
     }
   });
 
+  // Same-origin bridge for `@pollar/core` client SDK calls so browser/iframe environments
+  // receive clean JSON responses instead of CORS-opaque `TypeError: Failed to fetch` errors.
+  app.use('/api/pollar-sdk', async (req, res) => {
+    const upstreamBase = (
+      process.env.POLLAR_SDK_API_URL?.trim() || 'https://sdk.api.pollar.xyz'
+    ).replace(/\/+$/, '');
+    const upstreamUrl = `${upstreamBase}${req.url}`;
+
+    // Interactive OAuth popup navigations redirect straight to sdk.api.pollar.xyz
+    if (
+      req.method === 'GET' &&
+      /^\/v3\/auth\/(google|github|discord|apple|x)$/i.test(req.path)
+    ) {
+      return res.redirect(302, upstreamUrl);
+    }
+
+    const forwardHeaders: Record<string, string> = {
+      Accept: req.get('accept') || 'application/json',
+    };
+    const passThroughKeys = [
+      'x-pollar-api-key',
+      'x-pollar-sdk',
+      'authorization',
+      'dpop',
+      'origin',
+    ] as const;
+    for (const key of passThroughKeys) {
+      const val = req.get(key);
+      if (val) forwardHeaders[key] = val;
+    }
+
+    const hasBody =
+      req.method !== 'GET' &&
+      req.method !== 'HEAD' &&
+      (Number(req.get('content-length') || 0) > 0 ||
+        (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0));
+
+    if (hasBody) {
+      forwardHeaders['Content-Type'] = req.get('content-type') || 'application/json';
+    }
+
+    try {
+      const upstreamRes = await fetch(upstreamUrl, {
+        method: req.method,
+        headers: forwardHeaders,
+        body: hasBody ? JSON.stringify(req.body) : undefined,
+      });
+
+      const responseHeadersToForward = [
+        'content-type',
+        'dpop-nonce',
+        'www-authenticate',
+        'date',
+        'deprecation',
+        'sunset',
+        'link',
+        'retry-after',
+      ];
+      for (const h of responseHeadersToForward) {
+        const val = upstreamRes.headers.get(h);
+        if (val) res.setHeader(h, val);
+      }
+
+      const rawText = await upstreamRes.text();
+      return res.status(upstreamRes.status).send(rawText);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to reach Pollar SDK API.';
+      return res.status(502).json({
+        success: false,
+        code: 'POLLAR_SDK_PROXY_ERROR',
+        message,
+      });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Vite Middleware (Dev) or Static Dist Serving (Prod)
   // ---------------------------------------------------------------------------

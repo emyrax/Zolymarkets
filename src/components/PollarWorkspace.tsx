@@ -49,6 +49,8 @@ export const PollarWorkspace: React.FC = () => {
     storageDegraded,
     serverStatus,
     statusLoading,
+    pollarAuthError,
+    clearPollarAuthError,
     refreshServerStatus,
   } = usePollarBridge();
 
@@ -402,6 +404,14 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
 
           {!isAuthenticated ? (
             <div className="p-4 sm:p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+              {pollarAuthError && (
+                <div
+                  role="alert"
+                  className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 break-words"
+                >
+                  {pollarAuthError}
+                </div>
+              )}
               <p className="text-xs text-slate-600 leading-relaxed">
                 Authenticate via Google OAuth, Email OTP, Passkey Smart Wallet, or external Stellar /
                 Solana adapters.
@@ -410,7 +420,10 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                 <button
                   type="button"
                   disabled={!publishableConfigured}
-                  onClick={() => login({ provider: 'google' })}
+                  onClick={() => {
+                    clearPollarAuthError();
+                    login({ provider: 'google' });
+                  }}
                   className="min-h-[44px] px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
                 >
                   Continue with Google (Pollar)
@@ -418,7 +431,10 @@ POLLAR_SECRET_KEY="sec_testnet_..."`;
                 <button
                   type="button"
                   disabled={!publishableConfigured}
-                  onClick={() => openLoginModal()}
+                  onClick={() => {
+                    clearPollarAuthError();
+                    openLoginModal();
+                  }}
                   className="min-h-[44px] px-4 py-2.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 cursor-pointer"
                 >
                   Open Email / Passkey / Wallet Modal

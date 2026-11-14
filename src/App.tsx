@@ -14,6 +14,8 @@ import { HostDashboard } from './components/HostDashboard.tsx';
 import { PlayerRoom } from './components/PlayerRoom.tsx';
 import { PollarWorkspace } from './components/PollarWorkspace.tsx';
 import { Zip321RoomPrefill, Zip321ScannerModal } from './components/Zip321ScannerModal.tsx';
+import { DualRailAuthModal } from './components/DualRailAuthModal.tsx';
+import { DualRailFlowBar } from './components/DualRailFlowBar.tsx';
 import { useRealtimeMarkets } from './hooks/useRealtimeMarkets.ts';
 import { useAuth } from './contexts/AuthContext.tsx';
 import { MarketCategory, MarketWithDetails } from './types/database.ts';
@@ -132,6 +134,11 @@ export default function App() {
     [markets]
   );
 
+  const firstOpenMarketId = useMemo(
+    () => markets.find((m) => m.status === 'open')?.id ?? markets[0]?.id ?? null,
+    [markets]
+  );
+
   const handleCopyAddress = async (creatorId: string, address: string) => {
     try {
       await navigator.clipboard.writeText(address);
@@ -161,6 +168,7 @@ export default function App() {
             creators={creators}
             initialPrefill={roomPrefill}
             onBackToMarkets={() => navigateTo('markets')}
+            onOpenScanner={() => setScannerOpen(true)}
           />
         ) : (
           <>
@@ -197,6 +205,14 @@ export default function App() {
                 </div>
               </div>
             </section>
+
+            {/* Interactive 4-Step Dual-Rail User Flow */}
+            <DualRailFlowBar
+              firstOpenMarketId={firstOpenMarketId}
+              onNavigate={navigateTo}
+              onOpenScanner={() => setScannerOpen(true)}
+              onOpenRoom={openRoom}
+            />
 
             {/* Filter & Search Toolbar */}
             <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4">
@@ -509,6 +525,12 @@ export default function App() {
         markets={markets}
         onClose={() => setScannerOpen(false)}
         onJoinRoom={openRoom}
+        onBetUploaded={() => void refresh()}
+      />
+
+      <DualRailAuthModal
+        onNavigate={navigateTo}
+        onOpenScanner={() => setScannerOpen(true)}
       />
     </div>
   );

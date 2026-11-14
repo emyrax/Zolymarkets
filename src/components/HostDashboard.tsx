@@ -37,6 +37,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import { usePollar } from '@pollar/react';
 import { OperationType, db, handleFirestoreError } from '../lib/firebase.ts';
 import { estimateSharesOut, formatZec, zatoshisToZec, zecToZatoshis } from '../lib/cpmm.ts';
 import {
@@ -144,13 +145,18 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   onOpenRoom,
   onRefresh,
 }) => {
-  const { user, signInWithGoogle } = useAuth();
+  const { user, walletSession, openAuthModal, signInWithGoogle } = useAuth();
+  const { isAuthenticated: pollarAuthed, wallet: pollarWallet } = usePollar();
+
+  const hasAnyIdentity = Boolean(user || walletSession || pollarAuthed);
 
   // Create Screen state
   const [question, setQuestion] = useState<string>('');
   const [durationValue, setDurationValue] = useState<number>(24);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('hours');
-  const [payoutAddress, setPayoutAddress] = useState<string>('');
+  const [payoutAddress, setPayoutAddress] = useState<string>(() =>
+    walletSession?.rail === 'zcash' ? walletSession.address : ''
+  );
   const [poolAddressMode, setPoolAddressMode] = useState<'zashi' | 'zingo'>('zashi');
   const [customPoolAddress, setCustomPoolAddress] = useState<string>('');
   const [createUfvk, setCreateUfvk] = useState<string>('');
@@ -192,19 +198,41 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
     );
   }, [activeMarketId, markets, localActiveSnapshot]);
 
-  // Existing markets owned by the signed-in creator
+  // Existing markets owned by the signed-in creator (Google, Zcash, or Pollar)
   const myHostedMarkets = useMemo(() => {
-    if (!user) return [];
+    const zcashAddr = walletSession?.rail === 'zcash' ? walletSession.address.toLowerCase() : null;
+    if (!user && !zcashAddr) return [];
     return markets.filter(
-      (m) => m.ownerUid === user.uid || m.creatorId === `creator_${user.uid.slice(0, 24)}`
+      (m) =>
+        (user &&
+          (m.ownerUid === user.uid || m.creatorId === `creator_${user.uid.slice(0, 24)}`)) ||
+        (zcashAddr &&
+          (m.creator.zcashUnifiedAddress.toLowerCase() === zcashAddr ||
+            m.shieldedPoolAddress.toLowerCase() === zcashAddr))
     );
-  }, [markets, user]);
+  }, [markets, user, walletSession]);
 
   const existingUserCreator = useMemo(() => {
-    if (!user) return null;
-    const expectedId = `creator_${user.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24)}`;
-    return creators.find((c) => c.id === expectedId) ?? null;
-  }, [creators, user]);
+    if (user) {
+      const expectedId = `creator_${user.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24)}`;
+      const found = creators.find((c) => c.id === expectedId);
+      if (found) return found;
+    }
+    if (walletSession?.rail === 'zcash') {
+      return (
+        creators.find(
+          (c) => c.zcashUnifiedAddress.toLowerCase() === walletSession.address.toLowerCase()
+        ) ?? null
+      );
+    }
+    return null;
+  }, [creators, user, walletSession]);
+
+  useEffect(() => {
+    if (walletSession?.rail === 'zcash' && !payoutAddress.trim()) {
+      setPayoutAddress(walletSession.address);
+    }
+  }, [walletSession, payoutAddress]);
 
   // Subscribe to real-time `shielded_bets` for activeMarket + load browser-only UFVK
   useEffect(() => {
@@ -343,11 +371,15 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   };
 
   const handleFillSampleAddress = () => {
+    if (walletSession?.rail === 'zcash') {
+      setPayoutAddress(walletSession.address);
+      return;
+    }
     if (existingUserCreator?.zcashUnifiedAddress) {
       setPayoutAddress(existingUserCreator.zcashUnifiedAddress);
       return;
     }
-    setPayoutAddress('u1hostpayout9x8c7v6b5n4m3l2k1j0h9g8f7d6s5a4p3o2i1u2y3t4r5e6w7q8');
+    setPayoutAddress('utest1hostpayout9x8c7v6b5n4m3l2k1j0h9g8f7d6s5a4p3o2i1u2y3t4r5e6w7q8');
   };
 
   const handleDecodeZashiMemo = (raw: string) => {
@@ -380,7 +412,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
   const handleVerifyZashiBet = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeMarket || !user) return;
+    if (!activeMarket || !hasAnyIdentity) return;
 
     setActionError(null);
     setActionSuccess(null);
@@ -448,43 +480,45 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       };
       const rawMemoHex = utf8ToHex(JSON.stringify(memoObj)).slice(0, 1024);
 
-      const batch = writeBatch(db);
-      const betRef = doc(db, 'shielded_bets', betId);
-      const marketRef = doc(db, 'markets', activeMarket.id);
+      if (user) {
+        const batch = writeBatch(db);
+        const betRef = doc(db, 'shielded_bets', betId);
+        const marketRef = doc(db, 'markets', activeMarket.id);
 
-      batch.set(betRef, {
-        id: betId,
-        marketId: activeMarket.id,
-        txid: cleanTxid,
-        poolType: 'orchard',
-        recipientAddress: activeMarket.shieldedPoolAddress,
-        pick: verifyPick,
-        payoutTo: cleanPayoutTo,
-        amountZatoshis,
-        rawMemoHex,
-        decodedMemo: memoObj,
-        confirmations: 1,
-        createdAt: serverTimestamp(),
-      });
+        batch.set(betRef, {
+          id: betId,
+          marketId: activeMarket.id,
+          txid: cleanTxid,
+          poolType: 'orchard',
+          recipientAddress: activeMarket.shieldedPoolAddress,
+          pick: verifyPick,
+          payoutTo: cleanPayoutTo,
+          amountZatoshis,
+          rawMemoHex,
+          decodedMemo: memoObj,
+          confirmations: 1,
+          createdAt: serverTimestamp(),
+        });
 
-      batch.update(marketRef, {
-        yesPoolZatoshis: nextYesPool,
-        noPoolZatoshis: nextNoPool,
-        yesSharesOutstanding: nextYesShares,
-        noSharesOutstanding: nextNoShares,
-        totalVolumeZatoshis: activeMarket.totalVolumeZatoshis + amountZatoshis,
-        liquidityZatoshis: nextYesPool + nextNoPool,
-        updatedAt: serverTimestamp(),
-      });
+        batch.update(marketRef, {
+          yesPoolZatoshis: nextYesPool,
+          noPoolZatoshis: nextNoPool,
+          yesSharesOutstanding: nextYesShares,
+          noSharesOutstanding: nextNoShares,
+          totalVolumeZatoshis: activeMarket.totalVolumeZatoshis + amountZatoshis,
+          liquidityZatoshis: nextYesPool + nextNoPool,
+          updatedAt: serverTimestamp(),
+        });
 
-      try {
-        await batch.commit();
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `markets/${activeMarket.id}/shielded_bets`);
+        try {
+          await batch.commit();
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `markets/${activeMarket.id}/shielded_bets`);
+        }
       }
 
-      // Mirror to Express store for offline/API clients
-      void fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/bets`, {
+      // Mirror / persist to Express store (works for Zcash / Pollar-only sessions too)
+      const apiBetRes = await fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/bets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -497,7 +531,41 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           rawMemoHex,
           confirmations: 1,
         }),
-      }).then(() => onRefresh?.());
+      });
+      if (!user && !apiBetRes.ok) {
+        throw new Error('Unable to record verified bet on server.');
+      }
+      if (!user) {
+        const createdBet: ShieldedBet = {
+          id: betId,
+          marketId: activeMarket.id,
+          txid: cleanTxid,
+          poolType: 'orchard',
+          recipientAddress: activeMarket.shieldedPoolAddress,
+          pick: verifyPick,
+          payoutTo: cleanPayoutTo,
+          amountZatoshis,
+          rawMemoHex,
+          decodedMemoJson: memoObj,
+          confirmations: 1,
+          createdAt: new Date().toISOString(),
+        };
+        setMarketBets((prev) => [createdBet, ...prev]);
+        setLocalActiveSnapshot((prev) =>
+          prev && prev.id === activeMarket.id
+            ? {
+                ...prev,
+                totalVolumeZatoshis: prev.totalVolumeZatoshis + amountZatoshis,
+                liquidityZatoshis: nextYesPool + nextNoPool,
+                outcomes: {
+                  yes: { ...prev.outcomes.yes, poolZatoshis: nextYesPool, sharesOutstanding: nextYesShares },
+                  no: { ...prev.outcomes.no, poolZatoshis: nextNoPool, sharesOutstanding: nextNoShares },
+                },
+              }
+            : prev
+        );
+      }
+      void onRefresh?.();
 
       setVerifyTxid('');
       setRawZashiMemoInput('');
@@ -520,8 +588,9 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
     setActionError(null);
     setActionSuccess(null);
 
-    if (!user) {
-      setFormError('Sign in with Google first to create and manage a market in Cloud Firestore.');
+    if (!hasAnyIdentity) {
+      setFormError('Sign in with Zcash, Pollar / Polygon, or Google to host a market.');
+      openAuthModal('zcash');
       return;
     }
 
@@ -547,37 +616,49 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
     setCreating(true);
     try {
-      const uidFragment = user.uid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'host';
+      const identityKey =
+        user?.uid ||
+        walletSession?.address ||
+        pollarWallet?.address ||
+        'host';
+      const uidFragment = identityKey.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || 'host';
       const creatorId = `creator_${uidFragment}`;
-      const creatorDisplayName = (user.displayName || 'Market Host').slice(0, 80);
+      const creatorDisplayName = (
+        user?.displayName ||
+        (walletSession
+          ? `${walletSession.rail === 'zcash' ? 'Zcash' : 'Polygon'} Host`
+          : 'Pollar Creator')
+      ).slice(0, 80);
       const creatorHandle = sanitizeHandle(
-        user.email?.split('@')[0] || user.displayName || `host_${uidFragment.slice(0, 6)}`
+        user?.email?.split('@')[0] || user?.displayName || `host_${uidFragment.slice(0, 6)}`
       );
 
-      // Step 1: Ensure creator profile exists in Cloud Firestore prior to market creation
-      const creatorRef = doc(db, 'creators', creatorId);
-      try {
-        const existingCreatorSnap = await getDoc(creatorRef);
-        if (!existingCreatorSnap.exists()) {
-          await setDoc(creatorRef, {
-            id: creatorId,
-            ownerUid: user.uid,
-            handle: creatorHandle,
-            displayName: creatorDisplayName,
-            bio: 'Zolymarket prediction market creator.',
-            zcashUnifiedAddress: cleanAddress,
-            verified: false,
-            marketsCreatedCount: 0,
-            totalVolumeZatoshis: 0,
-            createdAt: serverTimestamp(),
-          });
-        } else if (existingCreatorSnap.data()?.zcashUnifiedAddress !== cleanAddress) {
-          await updateDoc(creatorRef, {
-            zcashUnifiedAddress: cleanAddress,
-          });
+      // Step 1: Ensure creator profile exists in Cloud Firestore when optional Google Auth is linked
+      if (user) {
+        const creatorRef = doc(db, 'creators', creatorId);
+        try {
+          const existingCreatorSnap = await getDoc(creatorRef);
+          if (!existingCreatorSnap.exists()) {
+            await setDoc(creatorRef, {
+              id: creatorId,
+              ownerUid: user.uid,
+              handle: creatorHandle,
+              displayName: creatorDisplayName,
+              bio: 'Zolymarket prediction market creator.',
+              zcashUnifiedAddress: cleanAddress,
+              verified: false,
+              marketsCreatedCount: 0,
+              totalVolumeZatoshis: 0,
+              createdAt: serverTimestamp(),
+            });
+          } else if (existingCreatorSnap.data()?.zcashUnifiedAddress !== cleanAddress) {
+            await updateDoc(creatorRef, {
+              zcashUnifiedAddress: cleanAddress,
+            });
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `creators/${creatorId}`);
         }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `creators/${creatorId}`);
       }
 
       // Step 2: Determine Shielded Pool Address (Self-Custodial Zashi default or optional zingo-cli)
@@ -612,7 +693,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
             }
           }
         } catch {
-          // Preview environment without local zingo-cli falls back below
+          // Preview fallback
         }
 
         if (!shieldedPoolAddress) {
@@ -621,7 +702,6 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
         }
       }
 
-      // Persist optional read-only UFVK strictly in browser localStorage (never touches server)
       if (createUfvk.trim()) {
         try {
           localStorage.setItem(`${UFVK_STORAGE_PREFIX}${marketId}`, createUfvk.trim());
@@ -634,46 +714,48 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       const description = `Creator-hosted Zcash prediction market closing ${new Date(closesAtIso).toUTCString()}.`;
       const resolutionCriteria = `Market creator (${creatorDisplayName}) resolves YES or NO upon outcome verification before ${closesAtIso}.`;
 
-      // Step 3: Persist market to Cloud Firestore
-      const marketRef = doc(db, 'markets', marketId);
-      try {
-        await setDoc(marketRef, {
-          id: marketId,
-          slug,
-          creatorId,
-          ownerUid: user.uid,
-          question: cleanQuestion,
-          description,
-          resolutionCriteria,
-          category,
-          status: MarketStatus.Open,
-          shieldedPoolAddress,
-          creatorFeeBps: 150,
-          yesPoolZatoshis: initialSidePool,
-          noPoolZatoshis: initialSidePool,
-          yesSharesOutstanding: 0,
-          noSharesOutstanding: 0,
-          totalVolumeZatoshis: 0,
-          liquidityZatoshis: initialSidePool * 2,
-          yesProbability24hAgo: 50,
-          winningOutcome: null,
-          duration: durationHoursFloat,
-          closesAt: closesAtIso,
-          resolvedAt: null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `markets/${marketId}`);
+      // Step 3: Persist market to Cloud Firestore when Google Auth is active
+      if (user) {
+        const marketRef = doc(db, 'markets', marketId);
+        try {
+          await setDoc(marketRef, {
+            id: marketId,
+            slug,
+            creatorId,
+            ownerUid: user.uid,
+            question: cleanQuestion,
+            description,
+            resolutionCriteria,
+            category,
+            status: MarketStatus.Open,
+            shieldedPoolAddress,
+            creatorFeeBps: 150,
+            yesPoolZatoshis: initialSidePool,
+            noPoolZatoshis: initialSidePool,
+            yesSharesOutstanding: 0,
+            noSharesOutstanding: 0,
+            totalVolumeZatoshis: 0,
+            liquidityZatoshis: initialSidePool * 2,
+            yesProbability24hAgo: 50,
+            winningOutcome: null,
+            duration: durationHoursFloat,
+            closesAt: closesAtIso,
+            resolvedAt: null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, `markets/${marketId}`);
+        }
       }
 
-      // Step 4: Mirror to Express store for /api/markets & zingo-cli resolution support
+      // Step 4: Mirror / Create in Express store (primary for Zcash / Pollar-only sessions)
       const nowIso = new Date().toISOString();
       const createdMarket: MarketWithDetails = {
         id: marketId,
         slug,
         creatorId,
-        ownerUid: user.uid,
+        ownerUid: user?.uid || uidFragment,
         question: cleanQuestion,
         description,
         resolutionCriteria,
@@ -731,7 +813,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           id: marketId,
           slug,
           creatorId,
-          ownerUid: user.uid,
+          ownerUid: user?.uid || uidFragment,
           creatorDisplayName,
           creatorHandle,
           creatorPayoutAddress: cleanAddress,
@@ -774,14 +856,16 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
     setLocking(true);
 
     try {
-      const marketRef = doc(db, 'markets', activeMarket.id);
-      try {
-        await updateDoc(marketRef, {
-          status: MarketStatus.Locked,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `markets/${activeMarket.id}`);
+      if (user) {
+        const marketRef = doc(db, 'markets', activeMarket.id);
+        try {
+          await updateDoc(marketRef, {
+            status: MarketStatus.Locked,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `markets/${activeMarket.id}`);
+        }
       }
 
       setLocalActiveSnapshot((prev) =>
@@ -811,16 +895,18 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
     const resolvedAtIso = new Date().toISOString();
 
     try {
-      const marketRef = doc(db, 'markets', activeMarket.id);
-      try {
-        await updateDoc(marketRef, {
-          status: MarketStatus.Resolved,
-          winningOutcome: selectedWinner,
-          resolvedAt: resolvedAtIso,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `markets/${activeMarket.id}`);
+      if (user) {
+        const marketRef = doc(db, 'markets', activeMarket.id);
+        try {
+          await updateDoc(marketRef, {
+            status: MarketStatus.Resolved,
+            winningOutcome: selectedWinner,
+            resolvedAt: resolvedAtIso,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `markets/${activeMarket.id}`);
+        }
       }
 
       setLocalActiveSnapshot((prev) =>
@@ -906,24 +992,50 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
         )}
       </section>
 
-      {/* Sign-in Prompt if Unauthenticated */}
-      {!user && (
+      {/* Sign-in Prompt: Zcash or Pollar/Polygon primary, Google optional */}
+      {!hasAnyIdentity ? (
         <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <h2 className="font-display text-base font-semibold text-slate-900">
-              Sign in with Google to Host Markets
+              Sign in with Zcash or Pollar / Polygon to Host Markets
             </h2>
             <p className="text-sm text-slate-600">
-              Cloud Firestore security rules require a verified Google account to publish, lock, and
-              resolve markets.
+              Connect your Zcash Unified wallet, Pollar / Polygon identity, or optional Google
+              account to create and resolve prediction markets.
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openAuthModal('zcash')}
+              className="min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            >
+              Sign in (Zcash / Pollar)
+            </button>
+            <button
+              type="button"
+              onClick={() => void signInWithGoogle()}
+              className="min-h-[40px] px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors duration-150 whitespace-nowrap cursor-pointer"
+            >
+              Optional: Google
+            </button>
+          </div>
+        </section>
+      ) : !user && (
+        <section className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <p className="text-slate-600">
+            Hosting via{' '}
+            <span className="font-semibold text-slate-900">
+              {walletSession ? walletSession.label : 'Pollar Social'}
+            </span>
+            . Optional: link Google for Cloud Firestore persistence across devices.
+          </p>
           <button
             type="button"
             onClick={() => void signInWithGoogle()}
-            className="px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
+            className="min-h-[36px] px-3 py-1.5 font-semibold text-slate-800 bg-white border border-slate-200 hover:border-slate-300 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
           >
-            Sign in with Google
+            Optional: Link Google
           </button>
         </section>
       )}
