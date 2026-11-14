@@ -7,10 +7,11 @@
 
 import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Copy, Check } from 'lucide-react';
+import { X, Copy, Check, ExternalLink } from 'lucide-react';
 import { MarketWithDetails, OutcomeSide } from '../types/database.ts';
 import { estimateSharesOut, formatZec, zecToZatoshis } from '../lib/cpmm.ts';
 import { buildZip321Uri } from '../lib/zip321.ts';
+import { formatShortTxid, getZcashTxExplorerUrls } from '../lib/explorers.ts';
 import { SentimentTrendChart } from './SentimentTrendChart.tsx';
 import { MarketCountdown } from './MarketCountdown.tsx';
 
@@ -159,6 +160,25 @@ export const MarketDetailDrawer: React.FC<MarketDetailDrawerProps> = ({
                   <span>Creator Fee: {(market.creatorFeeBps / 100).toFixed(2)}%</span>
                   <span aria-hidden="true">·</span>
                   <span>Status: {market.status.toUpperCase()}</span>
+                  {market.creationTxid && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <a
+                        href={
+                          getZcashTxExplorerUrls(
+                            market.creationTxid,
+                            market.shieldedPoolAddress
+                          ).primaryUrl
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-900 underline underline-offset-2"
+                      >
+                        <span>Creation Tx: {formatShortTxid(market.creationTxid, 6, 4)}</span>
+                        <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                      </a>
+                    </>
+                  )}
                 </div>
               </section>
 

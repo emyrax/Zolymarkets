@@ -27,7 +27,17 @@ interface ZingoStatusResponse {
   serverUri: string | null;
   dataDir: string | null;
   dataDirExists: boolean | null;
+  misconfiguredBinAsUrl?: boolean;
+  lightwalletdReachable?: boolean;
+  lightwalletdLatencyMs?: number | null;
   error: string | null;
+}
+
+interface ZingoNodeTelemetryResponse {
+  status: ZingoStatusResponse;
+  nodeAddress: string | null;
+  blockHeight: number | null;
+  balanceZatoshis: number | null;
 }
 
 interface VpsProviderSpec {
@@ -143,7 +153,14 @@ export const ZingoSetupGuide: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusLoading, setStatusLoading] = useState<boolean>(false);
   const [cliStatus, setCliStatus] = useState<ZingoStatusResponse | null>(null);
+  const [nodeTelemetry, setNodeTelemetry] = useState<ZingoNodeTelemetryResponse | null>(null);
   const [statusFetchError, setStatusFetchError] = useState<string | null>(null);
+  const [provisionLoading, setProvisionLoading] = useState<boolean>(false);
+  const [provisionResult, setProvisionResult] = useState<{
+    address: string;
+    ufvk: string;
+  } | null>(null);
+  const [provisionError, setProvisionError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -208,15 +225,51 @@ export const ZingoSetupGuide: React.FC = () => {
     setStatusLoading(true);
     setStatusFetchError(null);
     try {
-      const response = await fetch('/api/zcash/status');
-      const data = (await response.json()) as ZingoStatusResponse;
-      setCliStatus(data);
+      const response = await fetch('/api/zcash/node');
+      if (response.ok) {
+        const data = (await response.json()) as ZingoNodeTelemetryResponse;
+        setNodeTelemetry(data);
+        setCliStatus(data.status);
+      } else {
+        const fallbackRes = await fetch('/api/zcash/status');
+        const fallbackData = (await fallbackRes.json()) as ZingoStatusResponse;
+        setCliStatus(fallbackData);
+      }
     } catch (err) {
       setStatusFetchError(
-        err instanceof Error ? err.message : 'Unable to reach /api/zcash/status.'
+        err instanceof Error ? err.message : 'Unable to reach /api/zcash/node.'
       );
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void checkReadiness();
+  }, []);
+
+  const handleProvisionWallet = async () => {
+    setProvisionLoading(true);
+    setProvisionError(null);
+    setProvisionResult(null);
+    try {
+      const res = await fetch('/api/zcash/wallet', { method: 'POST' });
+      const data = (await res.json()) as {
+        address?: string;
+        ufvk?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.address || !data.ufvk) {
+        throw new Error(data.error || 'Unable to provision Testnet wallet.');
+      }
+      setProvisionResult({ address: data.address, ufvk: data.ufvk });
+      void checkReadiness();
+    } catch (err) {
+      setProvisionError(
+        err instanceof Error ? err.message : 'Unable to provision Zingo Testnet wallet.'
+      );
+    } finally {
+      setProvisionLoading(false);
     }
   };
 
@@ -600,32 +653,66 @@ export const ZingoSetupGuide: React.FC = () => {
           <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1 min-w-0">
               <p className="text-sm font-medium text-slate-900">
-                Backend Environment Diagnostic
+                Live Zingo Testnet Node &amp; CLI Diagnostic
               </p>
               <p className="text-xs text-slate-500">
-                Queries <code className="font-mono">GET /api/zcash/status</code> on the running
-                Express server to verify binary reachability and active flags.
+                Queries <code className="font-mono">GET /api/zcash/node</code> to verify
+                lightwalletd RPC reachability, <code className="font-mono">zingo-cli</code> binary
+                flags, and synced wallet height.
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void checkReadiness()}
-              disabled={statusLoading}
-              className="inline-flex items-center justify-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors duration-150 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 ${statusLoading ? 'animate-spin' : ''}`}
-                aria-hidden="true"
-              />
-              <span>{statusLoading ? 'Checking Server...' : 'Test CLI Readiness'}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void checkReadiness()}
+                disabled={statusLoading}
+                className="inline-flex items-center justify-center gap-2 min-h-[40px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 disabled:opacity-60 transition-colors duration-150 whitespace-nowrap cursor-pointer"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${statusLoading ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>{statusLoading ? 'Checking Node...' : 'Test Node & CLI'}</span>
+              </button>
+
+              {cliStatus?.available && (
+                <button
+                  type="button"
+                  onClick={() => void handleProvisionWallet()}
+                  disabled={provisionLoading}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-[40px] px-3.5 py-2 text-xs font-semibold text-slate-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg disabled:opacity-60 transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  <span>
+                    {provisionLoading ? 'Provisioning...' : 'Provision Testnet Wallet'}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
 
           {statusFetchError && (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2.5">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
               <span>{statusFetchError}</span>
+            </div>
+          )}
+
+          {cliStatus?.misconfiguredBinAsUrl && (
+            <div className="p-4 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-950 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
+              <div className="space-y-1">
+                <p className="font-semibold">
+                  Configuration Fix Needed: ZINGO_CLI_BIN is currently set to a URL
+                </p>
+                <p className="text-amber-900 leading-relaxed">
+                  Move <code className="font-mono">https://testnet.zec.rocks:443</code> into{' '}
+                  <code className="font-mono">ZINGO_SERVER_URI</code>, and set{' '}
+                  <code className="font-mono">ZINGO_CLI_BIN</code> to the compiled filesystem path{' '}
+                  (<code className="font-mono">/usr/local/bin/zingo-cli</code>). Lightwalletd RPC
+                  still probes <code className="font-mono">{cliStatus.serverUri}</code> automatically.
+                </p>
+              </div>
             </div>
           )}
 
@@ -637,22 +724,35 @@ export const ZingoSetupGuide: React.FC = () => {
                   : 'bg-amber-50/70 border-amber-200 text-slate-800'
               }`}
             >
-              <div className="flex items-center gap-2 font-medium">
-                {cliStatus.available ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
-                    <span className="text-emerald-900">
-                      Ready: zingo-cli detected ({cliStatus.version})
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" aria-hidden="true" />
-                    <span className="text-amber-900">
-                      Not detected on current server host: {cliStatus.error}
-                    </span>
-                  </>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2 font-medium">
+                <div className="flex items-center gap-2 min-w-0">
+                  {cliStatus.available ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" aria-hidden="true" />
+                      <span className="text-emerald-900">
+                        Ready: zingo-cli detected ({cliStatus.version})
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" aria-hidden="true" />
+                      <span className="text-amber-900">
+                        Not detected on current server host: {cliStatus.error}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <span
+                  className={`font-mono tabular-nums text-[11px] font-semibold ${
+                    cliStatus.lightwalletdReachable ? 'text-emerald-800' : 'text-amber-800'
+                  }`}
+                >
+                  Lightwalletd:{' '}
+                  {cliStatus.lightwalletdReachable
+                    ? `Reachable (${cliStatus.lightwalletdLatencyMs ?? 0}ms)`
+                    : 'Offline / Unreachable'}
+                </span>
               </div>
 
               <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-200/70 font-mono">
@@ -667,7 +767,7 @@ export const ZingoSetupGuide: React.FC = () => {
                   <dd className="text-slate-900">{cliStatus.chain}</dd>
                 </div>
                 <div>
-                  <dt className="font-sans text-slate-500">Server URI</dt>
+                  <dt className="font-sans text-slate-500">Lightwalletd URI</dt>
                   <dd className="text-slate-900 truncate" title={cliStatus.serverUri ?? 'unset'}>
                     {cliStatus.serverUri ?? 'Unset'}
                   </dd>
@@ -681,6 +781,51 @@ export const ZingoSetupGuide: React.FC = () => {
                   </dd>
                 </div>
               </dl>
+
+              {cliStatus.available && nodeTelemetry && (
+                <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-emerald-200/70 font-mono">
+                  <div className="sm:col-span-2 min-w-0">
+                    <dt className="font-sans text-slate-500">Attached Node Unified Address</dt>
+                    <dd
+                      className="text-slate-900 truncate"
+                      title={nodeTelemetry.nodeAddress ?? 'Uninitialized'}
+                    >
+                      {nodeTelemetry.nodeAddress ?? 'Run zingo-cli addresses to initialize'}
+                    </dd>
+                  </div>
+                  <div className="tabular-nums">
+                    <dt className="font-sans text-slate-500">Synced Height / Balance</dt>
+                    <dd className="text-slate-900">
+                      {nodeTelemetry.blockHeight !== null ? `#${nodeTelemetry.blockHeight}` : '—'} ·{' '}
+                      {nodeTelemetry.balanceZatoshis !== null
+                        ? `${(nodeTelemetry.balanceZatoshis / 100_000_000).toFixed(4)} TAZ`
+                        : '0.0000 TAZ'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+
+          {provisionError && (
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800">
+              {provisionError}
+            </div>
+          )}
+
+          {provisionResult && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-xs space-y-2 font-mono">
+              <p className="font-sans font-semibold text-emerald-900">
+                Provisioned Fresh Testnet Wallet Credentials
+              </p>
+              <div className="break-all text-slate-800">
+                <span className="font-sans text-slate-500 block">Unified Address:</span>
+                {provisionResult.address}
+              </div>
+              <div className="break-all text-slate-800">
+                <span className="font-sans text-slate-500 block">Read-Only UFVK:</span>
+                {provisionResult.ufvk}
+              </div>
             </div>
           )}
         </article>

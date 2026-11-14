@@ -10,6 +10,7 @@
  */
 
 import { exec } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,14 @@ import { promisify } from 'node:util';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminFirestore } from '../src/lib/firebase-admin.ts';
 import { store } from '../src/server/store.ts';
+import { encodeBase64Url } from '../src/lib/zip321.ts';
+import {
+  getZcashNetworkFromAddress,
+  getZcashTxExplorerUrls,
+  isValidOnChainTxid,
+  normalizeOnChainTxid,
+  ZcashNetwork,
+} from '../src/lib/explorers.ts';
 import {
   BatchPayoutItem,
   DecodedBetMemo,
@@ -85,7 +94,17 @@ export interface ZingoCliStatus {
   serverUri: string | null;
   dataDir: string | null;
   dataDirExists: boolean | null;
+  misconfiguredBinAsUrl: boolean;
+  lightwalletdReachable: boolean;
+  lightwalletdLatencyMs: number | null;
   error: string | null;
+}
+
+export interface ZingoNodeTelemetry {
+  status: ZingoCliStatus;
+  nodeAddress: string | null;
+  blockHeight: number | null;
+  balanceZatoshis: number | null;
 }
 
 interface ZingoNoteRecord {
@@ -111,24 +130,53 @@ interface ZingoNotesResponse {
   pending_sapling_notes?: ZingoNoteRecord[];
 }
 
+function stripOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function expandHomePrefix(value: string): string {
+  if (value.startsWith('~/')) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  if (value.startsWith('$HOME/')) {
+    return path.join(os.homedir(), value.slice(6));
+  }
+  return value;
+}
+
 /**
  * Resolves the configured `zingo-cli` binary and optional `--data-dir` flag.
  */
 function getZingoBinary(): string {
-  const configured = process.env.ZINGO_CLI_BIN?.trim();
-  const bin = configured && configured.length > 0 ? configured : 'zingo-cli';
-  // Guard against shell metacharacters in binary path
-  if (!/^[a-zA-Z0-9_./-]+$/.test(bin)) {
+  const configured = process.env.ZINGO_CLI_BIN
+    ? stripOuterQuotes(process.env.ZINGO_CLI_BIN)
+    : '';
+  // Guard against lightwalletd server URLs mistakenly placed in ZINGO_CLI_BIN
+  if (/^https?:\/\//i.test(configured)) {
+    return 'zingo-cli';
+  }
+  const expanded = configured.length > 0 ? expandHomePrefix(configured) : 'zingo-cli';
+  // Guard against shell metacharacters while allowing spaces, colons, dots, slashes, and hyphens
+  if (!expanded || /[;&|`$()<>\r\n"']/.test(expanded)) {
     throw new ZingoCliError(
       'Invalid ZINGO_CLI_BIN path characters.',
       'INVALID_INPUT'
     );
   }
-  return bin;
+  return expanded;
 }
 
 function getZingoChain(): 'testnet' | 'regtest' | 'mainnet' {
-  const explicitChain = process.env.ZINGO_CHAIN?.trim().toLowerCase();
+  const explicitChain = process.env.ZINGO_CHAIN
+    ? stripOuterQuotes(process.env.ZINGO_CHAIN).toLowerCase()
+    : '';
   if (explicitChain) {
     if (
       explicitChain === 'testnet' ||
@@ -144,38 +192,44 @@ function getZingoChain(): 'testnet' | 'regtest' | 'mainnet' {
   }
 
   // Backward-compatible fallback if legacy ZINGO_NETWORK_FLAG is present
-  const legacyFlag = process.env.ZINGO_NETWORK_FLAG?.trim().toLowerCase();
+  const legacyFlag = process.env.ZINGO_NETWORK_FLAG
+    ? stripOuterQuotes(process.env.ZINGO_NETWORK_FLAG).toLowerCase()
+    : '';
   if (legacyFlag === '--regtest' || legacyFlag === 'regtest') return 'regtest';
   if (legacyFlag === '--mainnet' || legacyFlag === 'mainnet') return 'mainnet';
   return 'testnet';
 }
 
 function getZingoServerUri(chain: 'testnet' | 'regtest' | 'mainnet'): string | null {
-  const configured = process.env.ZINGO_SERVER_URI?.trim();
-  if (configured !== undefined) {
-    if (configured.length === 0) return null;
-    if (!/^https?:\/\/[a-zA-Z0-9.-]+(:\d+)?(\/[a-zA-Z0-9._/-]*)?$/.test(configured)) {
+  const fallbackBinUrl = process.env.ZINGO_CLI_BIN
+    ? stripOuterQuotes(process.env.ZINGO_CLI_BIN)
+    : '';
+  const rawUri =
+    process.env.ZINGO_SERVER_URI !== undefined
+      ? stripOuterQuotes(process.env.ZINGO_SERVER_URI)
+      : /^https?:\/\//i.test(fallbackBinUrl)
+      ? fallbackBinUrl
+      : '';
+
+  if (rawUri.length > 0) {
+    if (!/^https?:\/\/[a-zA-Z0-9.-]+(:\d+)?(\/[a-zA-Z0-9._/-]*)?$/.test(rawUri)) {
       throw new ZingoCliError(
         'Invalid ZINGO_SERVER_URI format. Expected http(s)://host[:port].',
         'INVALID_INPUT'
       );
     }
-    return configured;
+    return rawUri;
   }
 
   return chain === 'testnet' ? 'https://testnet.zec.rocks:443' : null;
 }
 
 function resolveDataDir(): string | null {
-  const raw = process.env.ZINGO_DATA_DIR?.trim();
+  const raw = process.env.ZINGO_DATA_DIR
+    ? stripOuterQuotes(process.env.ZINGO_DATA_DIR)
+    : '';
   if (!raw) return null;
-  if (raw.startsWith('~/')) {
-    return path.join(os.homedir(), raw.slice(2));
-  }
-  if (raw.startsWith('$HOME/')) {
-    return path.join(os.homedir(), raw.slice(6));
-  }
-  return raw;
+  return expandHomePrefix(raw);
 }
 
 function buildZingoGlobalFlags(): string {
@@ -206,7 +260,7 @@ export function shellQuote(value: string): string {
 async function runZingoCommand(commandArgs: string): Promise<string> {
   const bin = getZingoBinary();
   const globalFlags = buildZingoGlobalFlags();
-  const fullCommand = `${bin} ${globalFlags} ${commandArgs}`.trim();
+  const fullCommand = `${shellQuote(bin)} ${globalFlags} ${commandArgs}`.trim();
 
   try {
     const { stdout } = await execAsync(fullCommand, {
@@ -236,11 +290,32 @@ async function runZingoCommand(commandArgs: string): Promise<string> {
   }
 }
 
+async function probeLightwalletdServer(
+  serverUri: string | null
+): Promise<{ reachable: boolean; latencyMs: number | null }> {
+  if (!serverUri) return { reachable: false, latencyMs: null };
+  const startedAt = Date.now();
+  try {
+    await fetch(serverUri, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(2_500),
+    });
+    return { reachable: true, latencyMs: Date.now() - startedAt };
+  } catch {
+    return { reachable: false, latencyMs: null };
+  }
+}
+
 /**
  * Checks whether `zingo-cli` is reachable on the host and returns sanitized
  * `.env` configuration details for the Zingo Setup diagnostic check.
  */
 export async function checkZingoCliStatus(): Promise<ZingoCliStatus> {
+  const rawEnvBin = process.env.ZINGO_CLI_BIN
+    ? stripOuterQuotes(process.env.ZINGO_CLI_BIN)
+    : '';
+  const misconfiguredBinAsUrl = /^https?:\/\//i.test(rawEnvBin);
+
   let binary = 'zingo-cli';
   let chain: 'testnet' | 'regtest' | 'mainnet' = 'testnet';
   let serverUri: string | null = null;
@@ -252,6 +327,7 @@ export async function checkZingoCliStatus(): Promise<ZingoCliStatus> {
     serverUri = getZingoServerUri(chain);
     dataDir = resolveDataDir();
   } catch (error) {
+    const lwd = await probeLightwalletdServer(serverUri);
     return {
       available: false,
       version: null,
@@ -260,17 +336,24 @@ export async function checkZingoCliStatus(): Promise<ZingoCliStatus> {
       serverUri,
       dataDir,
       dataDirExists: null,
+      misconfiguredBinAsUrl,
+      lightwalletdReachable: lwd.reachable,
+      lightwalletdLatencyMs: lwd.latencyMs,
       error: error instanceof Error ? error.message : 'Invalid ZINGO_* environment configuration.',
     };
   }
 
   const dataDirExists = dataDir ? fs.existsSync(dataDir) : null;
+  const lwdPromise = probeLightwalletdServer(serverUri);
 
   try {
-    const { stdout } = await execAsync(`${binary} --version`, {
-      timeout: 5_000,
-      maxBuffer: 256 * 1024,
-    });
+    const [{ stdout }, lwd] = await Promise.all([
+      execAsync(`${shellQuote(binary)} --version`, {
+        timeout: 5_000,
+        maxBuffer: 256 * 1024,
+      }),
+      lwdPromise,
+    ]);
     const version = stdout.trim() || 'installed';
     return {
       available: true,
@@ -280,9 +363,13 @@ export async function checkZingoCliStatus(): Promise<ZingoCliStatus> {
       serverUri,
       dataDir,
       dataDirExists,
+      misconfiguredBinAsUrl,
+      lightwalletdReachable: lwd.reachable,
+      lightwalletdLatencyMs: lwd.latencyMs,
       error: null,
     };
   } catch (error: unknown) {
+    const lwd = await lwdPromise;
     const err = error as NodeJS.ErrnoException & { stderr?: string };
     const detail = err?.stderr?.trim() || err?.message || 'zingo-cli binary not reachable';
     return {
@@ -293,12 +380,78 @@ export async function checkZingoCliStatus(): Promise<ZingoCliStatus> {
       serverUri,
       dataDir,
       dataDirExists,
+      misconfiguredBinAsUrl,
+      lightwalletdReachable: lwd.reachable,
+      lightwalletdLatencyMs: lwd.latencyMs,
       error:
         err?.code === 'ENOENT' || detail.includes('not found')
-          ? `Binary "${binary}" was not found on this host.`
+          ? misconfiguredBinAsUrl
+            ? `ZINGO_CLI_BIN is currently set to URL "${rawEnvBin}". Move that URL to ZINGO_SERVER_URI and set ZINGO_CLI_BIN to your binary path (e.g. /usr/local/bin/zingo-cli), or use Self-Custodial Testnet mode.`
+            : `Binary "${binary}" was not found on this host. Use Self-Custodial Zashi / Zingo Testnet mode or install zingo-cli on your VPS.`
           : detail,
     };
   }
+}
+
+/**
+ * Returns live Zingo Testnet Node telemetry (lightwalletd reachability plus active
+ * zingo-cli wallet address, synced block height, and shielded balance when present).
+ */
+export async function getZingoNodeTelemetry(): Promise<ZingoNodeTelemetry> {
+  const status = await checkZingoCliStatus();
+  if (!status.available) {
+    return {
+      status,
+      nodeAddress: null,
+      blockHeight: null,
+      balanceZatoshis: null,
+    };
+  }
+
+  let nodeAddress: string | null = null;
+  let blockHeight: number | null = null;
+  let balanceZatoshis: number | null = null;
+
+  try {
+    const addrStdout = await runZingoCommand('addresses');
+    const addrParsed = extractJsonFromCliOutput<unknown>(addrStdout);
+    nodeAddress = findAddressInPayload(addrParsed, addrStdout);
+  } catch {
+    // Non-fatal
+  }
+
+  try {
+    const balStdout = await runZingoCommand('balance');
+    const balParsed = extractJsonFromCliOutput<Record<string, unknown>>(balStdout);
+    if (typeof balParsed.total_orchard_balance === 'number') {
+      balanceZatoshis =
+        balParsed.total_orchard_balance +
+        (typeof balParsed.total_sapling_balance === 'number'
+          ? balParsed.total_sapling_balance
+          : 0);
+    } else if (typeof balParsed.orchard_balance === 'number') {
+      balanceZatoshis = balParsed.orchard_balance;
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  try {
+    const heightStdout = await runZingoCommand('height');
+    const heightParsed = extractJsonFromCliOutput<Record<string, unknown>>(heightStdout);
+    if (typeof heightParsed.height === 'number') {
+      blockHeight = heightParsed.height;
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  return {
+    status,
+    nodeAddress,
+    blockHeight,
+    balanceZatoshis,
+  };
 }
 
 /**
@@ -786,5 +939,412 @@ export async function executeBatchPayout(
     rawOutput: stdout,
     recipientCount: payoutArray.length,
     totalAmountZec: Number(totalAmountZec.toFixed(8)),
+  };
+}
+
+// -----------------------------------------------------------------------------
+// 4. verifyOnChainTransaction(txid, networkHint)
+// -----------------------------------------------------------------------------
+
+export interface OnChainTxVerificationResult {
+  validFormat: boolean;
+  txid: string;
+  network: ZcashNetwork;
+  explorerUrl: string;
+  secondaryExplorerUrl: string;
+  onChainFound: boolean;
+  confirmations: number | null;
+  blockHeight: number | null;
+  source: 'zingo-cli' | 'explorer' | 'local-store' | 'format-only';
+  message: string;
+}
+
+export async function verifyOnChainTransaction(
+  rawTxid: string,
+  addressOrNetwork?: string | null
+): Promise<OnChainTxVerificationResult> {
+  const cleanTxid = normalizeOnChainTxid(rawTxid);
+  const links = getZcashTxExplorerUrls(cleanTxid, addressOrNetwork);
+
+  if (!isValidOnChainTxid(rawTxid)) {
+    return {
+      validFormat: false,
+      txid: cleanTxid,
+      network: links.network,
+      explorerUrl: links.primaryUrl,
+      secondaryExplorerUrl: links.secondaryUrl,
+      onChainFound: false,
+      confirmations: null,
+      blockHeight: null,
+      source: 'format-only',
+      message: 'Transaction ID must be a 64-character hex string.',
+    };
+  }
+
+  // 1. Check attached zingo-cli wallet if present on host
+  try {
+    const cliStatus = await checkZingoCliStatus();
+    if (cliStatus.available) {
+      try {
+        const listStdout = await runZingoCommand('listtransactions');
+        const listParsed = extractJsonFromCliOutput<unknown>(listStdout);
+        const rows = Array.isArray(listParsed)
+          ? listParsed
+          : listParsed && typeof listParsed === 'object' && Array.isArray((listParsed as Record<string, unknown>).transactions)
+          ? ((listParsed as Record<string, unknown>).transactions as unknown[])
+          : [];
+        const matched = rows.find((item) => {
+          if (!item || typeof item !== 'object') return false;
+          const rec = item as Record<string, unknown>;
+          return typeof rec.txid === 'string' && normalizeOnChainTxid(rec.txid) === cleanTxid;
+        }) as Record<string, unknown> | undefined;
+
+        if (matched) {
+          const confirmations =
+            typeof matched.confirmations === 'number' ? matched.confirmations : 1;
+          const blockHeight =
+            typeof matched.block_height === 'number'
+              ? matched.block_height
+              : typeof matched.blockheight === 'number'
+              ? matched.blockheight
+              : null;
+          return {
+            validFormat: true,
+            txid: cleanTxid,
+            network: links.network,
+            explorerUrl: links.primaryUrl,
+            secondaryExplorerUrl: links.secondaryUrl,
+            onChainFound: true,
+            confirmations,
+            blockHeight,
+            source: 'zingo-cli',
+            message: `Verified on-chain via zingo-cli (${confirmations} confirmation${confirmations === 1 ? '' : 's'}).`,
+          };
+        }
+      } catch {
+        // Fallback to explorer & local registry below
+      }
+    }
+  } catch {
+    // Ignore binary probe failure
+  }
+
+  // 2. Query public Zcash Testnet/Mainnet explorer API with a short non-blocking timeout
+  const explorerApiUrl =
+    links.network === 'testnet'
+      ? `https://testnet.zcashblockexplorer.com/api/v1/transactions/${cleanTxid}`
+      : `https://api.blockchair.com/zcash/dashboards/transaction/${cleanTxid}`;
+
+  try {
+    const response = await fetch(explorerApiUrl, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as Record<string, unknown>;
+      const confirmations =
+        typeof payload.confirmations === 'number' ? payload.confirmations : 1;
+      const blockHeight =
+        typeof payload.blockHeight === 'number'
+          ? payload.blockHeight
+          : typeof payload.height === 'number'
+          ? payload.height
+          : null;
+      return {
+        validFormat: true,
+        txid: cleanTxid,
+        network: links.network,
+        explorerUrl: links.primaryUrl,
+        secondaryExplorerUrl: links.secondaryUrl,
+        onChainFound: true,
+        confirmations,
+        blockHeight,
+        source: 'explorer',
+        message: `Verified on Zcash ${links.network} explorer (${confirmations} confirmation${confirmations === 1 ? '' : 's'}).`,
+      };
+    }
+  } catch {
+    // Explorer APIs often rate-limit or block automated requests; keep flow non-blocking
+  }
+
+  // 3. Check if already recorded in local Zolymarket store
+  const existingBet = store
+    .listShieldedBets()
+    .find((b) => normalizeOnChainTxid(b.txid) === cleanTxid);
+  if (existingBet) {
+    return {
+      validFormat: true,
+      txid: cleanTxid,
+      network: links.network,
+      explorerUrl: links.primaryUrl,
+      secondaryExplorerUrl: links.secondaryUrl,
+      onChainFound: true,
+      confirmations: existingBet.confirmations,
+      blockHeight: null,
+      source: 'local-store',
+      message: `Recorded in Zolymarket ledger (${existingBet.confirmations} confirmation${existingBet.confirmations === 1 ? '' : 's'}). Open explorer link to inspect on-chain.`,
+    };
+  }
+
+  return {
+    validFormat: true,
+    txid: cleanTxid,
+    network: links.network,
+    explorerUrl: links.primaryUrl,
+    secondaryExplorerUrl: links.secondaryUrl,
+    onChainFound: false,
+    confirmations: null,
+    blockHeight: null,
+    source: 'format-only',
+    message: `Valid 64-hex Zcash ${links.network} txid format. Use the explorer links to verify inclusion on Zingo Testnet.`,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// 5. Zcash ("Zk-Cash") Protocol Challenge-Response Sign-In & UFVK Binding
+// -----------------------------------------------------------------------------
+
+interface StoredAuthChallenge {
+  challengeId: string;
+  nonce: string;
+  address: string;
+  recipientAddress: string;
+  network: ZcashNetwork;
+  memoJson: string;
+  expiresAtMs: number;
+}
+
+const AUTH_CHALLENGE_TTL_MS = 15 * 60 * 1000;
+const authChallenges = new Map<string, StoredAuthChallenge>();
+const UFVK_REGEX = /^(uview1|uviewtest1|uviewregtest1)[0-9a-zA-Z]{30,350}$/;
+
+export interface ZcashAuthChallengeResult {
+  challengeId: string;
+  nonce: string;
+  address: string;
+  recipientAddress: string;
+  network: ZcashNetwork;
+  memoJson: string;
+  zip321Uri: string;
+  amountZec: number;
+  expiresAt: string;
+  nodeAttached: boolean;
+}
+
+export interface ZcashAuthVerifyResult {
+  verified: boolean;
+  verifiedOnChain: boolean;
+  address: string;
+  network: ZcashNetwork;
+  txid: string | null;
+  ufvkFingerprint: string | null;
+  explorerUrl: string | null;
+  secondaryExplorerUrl: string | null;
+  source: 'zingo-cli' | 'explorer' | 'ufvk' | 'tx-format' | 'address-only';
+  message: string;
+}
+
+export async function createZcashAuthChallenge(
+  rawAddress: string
+): Promise<ZcashAuthChallengeResult> {
+  const address = rawAddress.trim();
+  if (!isValidZcashAddress(address) || address.length < 20) {
+    throw new ZingoCliError(
+      'A valid Zcash Unified (utest1.../u1...) or Sapling (zs1...) address is required for challenge sign-in.',
+      'INVALID_INPUT'
+    );
+  }
+
+  // Prune expired challenges
+  const nowMs = Date.now();
+  for (const [id, entry] of authChallenges.entries()) {
+    if (entry.expiresAtMs < nowMs) authChallenges.delete(id);
+  }
+
+  const telemetry = await getZingoNodeTelemetry();
+  const recipientAddress =
+    telemetry.nodeAddress && isValidZcashAddress(telemetry.nodeAddress)
+      ? telemetry.nodeAddress
+      : address;
+
+  const challengeId = `zauth_${crypto.randomBytes(8).toString('hex')}`;
+  const nonce = crypto.randomBytes(6).toString('hex');
+  const network = getZcashNetworkFromAddress(address);
+  const memoObj = {
+    v: 1,
+    act: 'signin',
+    nonce,
+    addr: address.slice(0, 28),
+  };
+  const memoJson = JSON.stringify(memoObj);
+  const memoB64 = encodeBase64Url(memoJson);
+  const amountZec = 0.0001;
+  const zip321Uri = `zcash:${recipientAddress}?amount=${amountZec}&memo=${memoB64}`;
+  const expiresAtMs = nowMs + AUTH_CHALLENGE_TTL_MS;
+
+  authChallenges.set(challengeId, {
+    challengeId,
+    nonce,
+    address,
+    recipientAddress,
+    network,
+    memoJson,
+    expiresAtMs,
+  });
+
+  return {
+    challengeId,
+    nonce,
+    address,
+    recipientAddress,
+    network,
+    memoJson,
+    zip321Uri,
+    amountZec,
+    expiresAt: new Date(expiresAtMs).toISOString(),
+    nodeAttached: telemetry.status.available,
+  };
+}
+
+export async function verifyZcashAuthProof(input: {
+  address: string;
+  challengeId?: string;
+  txid?: string;
+  ufvk?: string;
+}): Promise<ZcashAuthVerifyResult> {
+  const address = input.address.trim();
+  if (!isValidZcashAddress(address) || address.length < 20) {
+    throw new ZingoCliError(
+      'Enter a valid Zcash shielded address (utest1..., u1..., or zs1...).',
+      'INVALID_INPUT'
+    );
+  }
+
+  const network = getZcashNetworkFromAddress(address);
+  const challenge = input.challengeId ? authChallenges.get(input.challengeId.trim()) : undefined;
+
+  if (challenge && challenge.address !== address) {
+    throw new ZingoCliError(
+      'Sign-in address does not match the issued Zcash authentication challenge.',
+      'INVALID_INPUT'
+    );
+  }
+
+  let ufvkFingerprint: string | null = null;
+  if (input.ufvk && input.ufvk.trim().length > 0) {
+    const cleanUfvk = input.ufvk.trim();
+    if (!UFVK_REGEX.test(cleanUfvk)) {
+      throw new ZingoCliError(
+        'Invalid Unified Full Viewing Key format. Expected uviewtest1... or uview1...',
+        'INVALID_INPUT'
+      );
+    }
+    ufvkFingerprint = crypto.createHash('sha256').update(cleanUfvk).digest('hex').slice(0, 16);
+  }
+
+  // Optional 1: Verify supplied transaction ID
+  if (input.txid && input.txid.trim().length > 0) {
+    const txCheck = await verifyOnChainTransaction(input.txid, address);
+    if (!txCheck.validFormat) {
+      throw new ZingoCliError(txCheck.message, 'INVALID_INPUT');
+    }
+
+    if (challenge) authChallenges.delete(challenge.challengeId);
+    return {
+      verified: true,
+      verifiedOnChain: txCheck.onChainFound,
+      address,
+      network,
+      txid: txCheck.txid,
+      ufvkFingerprint,
+      explorerUrl: txCheck.explorerUrl,
+      secondaryExplorerUrl: txCheck.secondaryExplorerUrl,
+      source: txCheck.onChainFound ? (txCheck.source === 'zingo-cli' ? 'zingo-cli' : 'explorer') : 'tx-format',
+      message: txCheck.onChainFound
+        ? `Zcash protocol sign-in verified on ${network} (${txCheck.confirmations ?? 1} conf).`
+        : `Challenge proof attached (${txCheck.txid.slice(0, 10)}...). Verify inclusion via the Testnet Explorer link.`,
+    };
+  }
+
+  // Optional 2: Scan attached zingo-cli node notes for matching signin nonce memo
+  if (challenge) {
+    const status = await checkZingoCliStatus();
+    if (status.available) {
+      try {
+        const notesStdout = await runZingoCommand('notes');
+        const notesPayload = extractJsonFromCliOutput<ZingoNotesResponse>(notesStdout);
+        const notes = [
+          ...(notesPayload.unspent_orchard_notes ?? []),
+          ...(notesPayload.pending_orchard_notes ?? []),
+          ...(notesPayload.unspent_sapling_notes ?? []),
+          ...(notesPayload.pending_sapling_notes ?? []),
+        ];
+        for (const note of notes) {
+          const rawMemo = (note.memo_hex ?? note.memo ?? '').trim();
+          if (!rawMemo) continue;
+          try {
+            const utf8 = decodeHexMemoToUtf8(rawMemo);
+            const parsed = JSON.parse(utf8) as { act?: string; nonce?: string };
+            if (parsed.act === 'signin' && parsed.nonce === challenge.nonce && note.txid) {
+              const cleanTxid = normalizeOnChainTxid(note.txid);
+              const links = getZcashTxExplorerUrls(cleanTxid, address);
+              authChallenges.delete(challenge.challengeId);
+              return {
+                verified: true,
+                verifiedOnChain: true,
+                address,
+                network,
+                txid: cleanTxid,
+                ufvkFingerprint,
+                explorerUrl: links.primaryUrl,
+                secondaryExplorerUrl: links.secondaryUrl,
+                source: 'zingo-cli',
+                message: `Verified challenge nonce via live zingo-cli Testnet node (${cleanTxid.slice(0, 10)}...).`,
+              };
+            }
+          } catch {
+            // Skip non-auth memos
+          }
+        }
+      } catch {
+        // Fallback below
+      }
+    }
+  }
+
+  if (ufvkFingerprint) {
+    if (challenge) authChallenges.delete(challenge.challengeId);
+    return {
+      verified: true,
+      verifiedOnChain: false,
+      address,
+      network,
+      txid: null,
+      ufvkFingerprint,
+      explorerUrl: null,
+      secondaryExplorerUrl: null,
+      source: 'ufvk',
+      message: `Signed in with read-only viewing key fingerprint (${ufvkFingerprint}).`,
+    };
+  }
+
+  if (challenge) {
+    throw new ZingoCliError(
+      'Paste the broadcasted Zcash auth txid from Zingo/Zashi or bind a read-only UFVK to complete challenge verification.',
+      'INVALID_INPUT'
+    );
+  }
+
+  return {
+    verified: true,
+    verifiedOnChain: false,
+    address,
+    network,
+    txid: null,
+    ufvkFingerprint: null,
+    explorerUrl: null,
+    secondaryExplorerUrl: null,
+    source: 'address-only',
+    message: `Signed in with Zcash ${network} shielded address.`,
   };
 }

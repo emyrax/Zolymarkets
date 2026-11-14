@@ -20,8 +20,12 @@ import {
   ZingoCliError,
   checkZingoCliStatus,
   createNewMarketWallet,
+  createZcashAuthChallenge,
   executeBatchPayout,
+  getZingoNodeTelemetry,
   pollMempoolForBets,
+  verifyOnChainTransaction,
+  verifyZcashAuthProof,
 } from './lib/zcash-service.ts';
 import {
   PollarServiceError,
@@ -92,6 +96,7 @@ async function startServer() {
         resolutionCriteria?: string;
         category?: MarketCategory;
         shieldedPoolAddress?: string;
+        creationTxid?: string | null;
         duration?: number;
         closesAt?: string;
       };
@@ -125,6 +130,7 @@ async function startServer() {
           `Market creator resolves YES or NO upon outcome verification before ${body.closesAt}.`,
         category: body.category || MarketCategory.CreatorBets,
         shieldedPoolAddress: body.shieldedPoolAddress,
+        creationTxid: body.creationTxid ?? null,
         duration: typeof body.duration === 'number' ? body.duration : undefined,
         closesAt: body.closesAt,
       });
@@ -133,6 +139,28 @@ async function startServer() {
     } catch (error) {
       console.error('Error creating host market:', error);
       return res.status(500).json({ error: 'Failed to create market.' });
+    }
+  });
+
+  app.post('/api/markets/:id/anchor', async (req, res) => {
+    try {
+      const { txid } = req.body as { txid?: string };
+      if (!txid || !txid.trim()) {
+        return res.status(400).json({ error: 'txid is required to anchor market creation on-chain.' });
+      }
+      const existing = store.getMarketByIdOrSlug(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: 'Market not found.' });
+      }
+      const verification = await verifyOnChainTransaction(txid, existing.shieldedPoolAddress);
+      if (!verification.validFormat) {
+        return res.status(400).json({ error: verification.message, verification });
+      }
+      const market = store.attachMarketCreationTxid(existing.id, verification.txid);
+      return res.json({ market, verification });
+    } catch (error) {
+      console.error('Error anchoring market creation txid:', error);
+      return res.status(500).json({ error: 'Failed to anchor market creation transaction.' });
     }
   });
 
@@ -298,8 +326,60 @@ async function startServer() {
         serverUri: process.env.ZINGO_SERVER_URI || null,
         dataDir: process.env.ZINGO_DATA_DIR || null,
         dataDirExists: null,
+        misconfiguredBinAsUrl: false,
+        lightwalletdReachable: false,
+        lightwalletdLatencyMs: null,
         error: 'Failed to inspect zingo-cli status.',
       });
+    }
+  });
+
+  app.get('/api/zcash/node', async (_req, res) => {
+    try {
+      const telemetry = await getZingoNodeTelemetry();
+      res.json(telemetry);
+    } catch (error) {
+      console.error('Unexpected Zingo node telemetry error:', error);
+      res.status(500).json({ error: 'Failed to fetch Zingo Testnet node telemetry.' });
+    }
+  });
+
+  app.post('/api/zcash/auth/challenge', async (req, res) => {
+    try {
+      const { address } = req.body as { address?: string };
+      if (!address) {
+        return res.status(400).json({ error: 'Zcash shielded address is required.' });
+      }
+      const challenge = await createZcashAuthChallenge(address);
+      return res.status(201).json(challenge);
+    } catch (error) {
+      if (error instanceof ZingoCliError) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
+      console.error('Unexpected Zcash auth challenge error:', error);
+      return res.status(500).json({ error: 'Failed to create Zcash authentication challenge.' });
+    }
+  });
+
+  app.post('/api/zcash/auth/verify', async (req, res) => {
+    try {
+      const { address, challengeId, txid, ufvk } = req.body as {
+        address?: string;
+        challengeId?: string;
+        txid?: string;
+        ufvk?: string;
+      };
+      if (!address) {
+        return res.status(400).json({ error: 'Zcash shielded address is required.' });
+      }
+      const result = await verifyZcashAuthProof({ address, challengeId, txid, ufvk });
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof ZingoCliError) {
+        return res.status(400).json({ error: error.message, code: error.code });
+      }
+      console.error('Unexpected Zcash auth verification error:', error);
+      return res.status(500).json({ error: 'Failed to verify Zcash protocol sign-in proof.' });
     }
   });
 
@@ -367,6 +447,39 @@ async function startServer() {
       }
       console.error('Unexpected batch payout error:', error);
       return res.status(500).json({ error: 'Failed to execute batch payout.' });
+    }
+  });
+
+  app.post('/api/zcash/tx/verify', async (req, res) => {
+    try {
+      const { txid, address, network } = req.body as {
+        txid?: string;
+        address?: string;
+        network?: 'testnet' | 'mainnet';
+      };
+      if (!txid || !txid.trim()) {
+        return res.status(400).json({ error: 'txid is required.' });
+      }
+      const result = await verifyOnChainTransaction(txid, network || address);
+      return res.status(result.validFormat ? 200 : 400).json(result);
+    } catch (error) {
+      console.error('Unexpected tx verification error:', error);
+      return res.status(500).json({ error: 'Failed to verify Zcash transaction.' });
+    }
+  });
+
+  app.get('/api/zcash/tx/:txid', async (req, res) => {
+    try {
+      const network =
+        typeof req.query.network === 'string' &&
+        (req.query.network === 'testnet' || req.query.network === 'mainnet')
+          ? req.query.network
+          : 'testnet';
+      const result = await verifyOnChainTransaction(req.params.txid, network);
+      return res.status(result.validFormat ? 200 : 400).json(result);
+    } catch (error) {
+      console.error('Unexpected tx lookup error:', error);
+      return res.status(500).json({ error: 'Failed to inspect Zcash transaction.' });
     }
   });
 

@@ -4,11 +4,20 @@
   "installCommand": "npm install --prefer-offline --no-audit",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "build": {
+    "env": {
+      "NODE_VERSION": "20"
+    }
+  },
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
     {
       "source": "/room/:id",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/room/:id/(.*)",
       "destination": "/index.html"
     },
     {

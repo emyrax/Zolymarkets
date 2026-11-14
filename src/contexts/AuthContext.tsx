@@ -35,11 +35,21 @@ export interface DualRailSession {
   address: string;
   label: string;
   chainId?: string;
+  network?: 'testnet' | 'mainnet';
+  authTxid?: string;
+  ufvkFingerprint?: string;
+  verifiedOnChain?: boolean;
   connectedAt: string;
 }
 
 interface EthereumProviderLike {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+}
+
+export interface ZcashSignInOptions {
+  authTxid?: string;
+  ufvkFingerprint?: string;
+  verifiedOnChain?: boolean;
 }
 
 interface AuthContextValue {
@@ -53,7 +63,17 @@ interface AuthContextValue {
   openAuthModal: (tab?: AuthModalTab) => void;
   closeAuthModal: () => void;
   setUserRole: (role: UserRole) => void;
-  connectZcashWallet: (address: string, label?: string) => DualRailSession;
+  connectZcashWallet: (
+    address: string,
+    label?: string,
+    options?: ZcashSignInOptions
+  ) => DualRailSession;
+  verifyZcashSignIn: (params: {
+    address: string;
+    challengeId?: string;
+    txid?: string;
+    ufvk?: string;
+  }) => Promise<{ session: DualRailSession; message: string; explorerUrl: string | null }>;
   connectPolygonWallet: () => Promise<DualRailSession>;
   connectPolygonAddress: (address: string, label?: string) => DualRailSession;
   disconnectWalletSession: () => void;
@@ -151,6 +171,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           address: parsed.address.trim(),
           label: parsed.label || (parsed.rail === 'zcash' ? 'Zcash Shielded' : 'Polygon Wallet'),
           chainId: parsed.chainId,
+          network: parsed.network,
+          authTxid: parsed.authTxid,
+          ufvkFingerprint: parsed.ufvkFingerprint,
+          verifiedOnChain: parsed.verifiedOnChain,
           connectedAt: parsed.connectedAt || new Date().toISOString(),
         };
       }
@@ -218,17 +242,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const connectZcashWallet = useCallback(
-    (address: string, label = 'Zcash Unified Wallet'): DualRailSession => {
+    (
+      address: string,
+      label = 'Zcash Unified Wallet',
+      options?: ZcashSignInOptions
+    ): DualRailSession => {
       const clean = address.trim();
       if (!ZCASH_SHIELDED_REGEX.test(clean)) {
         throw new Error(
           'Enter a valid Zcash shielded address starting with u1, utest1, uregtest1, or zs1.'
         );
       }
+      const detectedNetwork: 'testnet' | 'mainnet' =
+        clean.startsWith('u1') || clean.startsWith('zs1') ? 'mainnet' : 'testnet';
       const session: DualRailSession = {
         rail: 'zcash',
         address: clean,
         label,
+        network: detectedNetwork,
+        authTxid: options?.authTxid,
+        ufvkFingerprint: options?.ufvkFingerprint,
+        verifiedOnChain: options?.verifiedOnChain,
         connectedAt: new Date().toISOString(),
       };
       setAuthError(null);
@@ -236,6 +270,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return session;
     },
     [persistWalletSession]
+  );
+
+  const verifyZcashSignIn = useCallback(
+    async (params: {
+      address: string;
+      challengeId?: string;
+      txid?: string;
+      ufvk?: string;
+    }): Promise<{ session: DualRailSession; message: string; explorerUrl: string | null }> => {
+      setAuthError(null);
+      const res = await fetch('/api/zcash/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      const json = (await res.json()) as {
+        verified?: boolean;
+        verifiedOnChain?: boolean;
+        address?: string;
+        txid?: string | null;
+        ufvkFingerprint?: string | null;
+        explorerUrl?: string | null;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok || !json.verified || !json.address) {
+        const errMsg = json.error || 'Unable to verify Zcash protocol sign-in proof.';
+        setAuthError(errMsg);
+        throw new Error(errMsg);
+      }
+
+      // Store read-only UFVK only inside browser localStorage if supplied
+      if (params.ufvk && params.ufvk.trim()) {
+        try {
+          localStorage.setItem('zolymarket_auth_ufvk_v1', params.ufvk.trim());
+        } catch {
+          // Ignore storage quota errors
+        }
+      }
+
+      const session = connectZcashWallet(
+        json.address,
+        json.verifiedOnChain
+          ? 'Zcash Verified Node'
+          : json.ufvkFingerprint
+          ? 'Zcash UFVK Verified'
+          : 'Zcash Unified Wallet',
+        {
+          authTxid: json.txid ?? undefined,
+          ufvkFingerprint: json.ufvkFingerprint ?? undefined,
+          verifiedOnChain: Boolean(json.verifiedOnChain),
+        }
+      );
+
+      return {
+        session,
+        message: json.message || 'Verified Zcash protocol sign-in.',
+        explorerUrl: json.explorerUrl ?? null,
+      };
+    },
+    [connectZcashWallet]
   );
 
   const connectPolygonAddress = useCallback(
@@ -345,6 +440,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         closeAuthModal,
         setUserRole,
         connectZcashWallet,
+        verifyZcashSignIn,
         connectPolygonWallet,
         connectPolygonAddress,
         disconnectWalletSession,

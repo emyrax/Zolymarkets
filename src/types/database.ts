@@ -65,6 +65,7 @@ export interface Market {
   category: MarketCategory;
   status: MarketStatus;
   shieldedPoolAddress: string;
+  creationTxid?: string | null;
   creatorFeeBps: number;
   totalVolumeZatoshis: number;
   liquidityZatoshis: number;

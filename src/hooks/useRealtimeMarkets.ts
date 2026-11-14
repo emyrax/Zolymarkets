@@ -195,6 +195,7 @@ export function useRealtimeMarkets(): UseRealtimeMarketsResult {
         const yesProb24h = Number(d.yesProbability24hAgo ?? yesProbability);
         const change24hPct = Math.round((yesProbability - yesProb24h) * 10) / 10;
         const updatedAt = toIsoString(d.updatedAt);
+        const bootstrapMatch = bootstrapMarkets.find((bm) => bm.id === id);
 
         return {
           id,
@@ -207,6 +208,9 @@ export function useRealtimeMarkets(): UseRealtimeMarketsResult {
           category: (d.category as MarketCategory) || MarketCategory.ZcashProtocol,
           status: (d.status as MarketStatus) || MarketStatus.Open,
           shieldedPoolAddress: String(d.shieldedPoolAddress || ''),
+          creationTxid:
+            bootstrapMatch?.creationTxid ??
+            (typeof d.creationTxid === 'string' ? d.creationTxid : null),
           creatorFeeBps: Number(d.creatorFeeBps ?? 150),
           totalVolumeZatoshis: Number(d.totalVolumeZatoshis ?? 0),
           liquidityZatoshis: Number(d.liquidityZatoshis ?? yesPool + noPool),

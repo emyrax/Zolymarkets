@@ -435,6 +435,7 @@ class LocalStore {
     resolutionCriteria: string;
     category: MarketCategory;
     shieldedPoolAddress: string;
+    creationTxid?: string | null;
     duration?: number;
     closesAt: string;
     creatorFeeBps?: number;
@@ -481,6 +482,7 @@ class LocalStore {
       category: input.category,
       status: MarketStatus.Open,
       shieldedPoolAddress: input.shieldedPoolAddress,
+      creationTxid: input.creationTxid?.trim() || null,
       creatorFeeBps: input.creatorFeeBps ?? 150,
       totalVolumeZatoshis: 0,
       liquidityZatoshis: initialSidePool * 2,
@@ -513,6 +515,17 @@ class LocalStore {
 
     this.state.markets.unshift(market);
     this.state.outcomes.push(yesOutcome, noOutcome);
+    this.persist(this.state);
+    return this.hydrateMarket(market);
+  }
+
+  public attachMarketCreationTxid(marketId: string, txid: string): MarketWithDetails | null {
+    const market = this.state.markets.find(
+      (m) => m.id === marketId || m.slug === marketId
+    );
+    if (!market) return null;
+    market.creationTxid = txid.trim().replace(/^0x/i, '').toLowerCase();
+    market.updatedAt = new Date().toISOString();
     this.persist(this.state);
     return this.hydrateMarket(market);
   }

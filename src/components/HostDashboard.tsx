@@ -45,6 +45,14 @@ import {
   decodeZashiMemoInput,
   utf8ToHex,
 } from '../lib/zip321.ts';
+import {
+  buildMarketAnchorZip321Uri,
+  formatShortTxid,
+  generateSampleTestnetUnifiedAddress,
+  getZcashTxExplorerUrls,
+  isValidOnChainTxid,
+  normalizeOnChainTxid,
+} from '../lib/explorers.ts';
 import { TopCreatorsLeaderboard } from './TopCreatorsLeaderboard.tsx';
 import {
   Creator,
@@ -160,6 +168,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   const [poolAddressMode, setPoolAddressMode] = useState<'zashi' | 'zingo'>('zashi');
   const [customPoolAddress, setCustomPoolAddress] = useState<string>('');
   const [createUfvk, setCreateUfvk] = useState<string>('');
+  const [createAnchorTxid, setCreateAnchorTxid] = useState<string>('');
   const [category, setCategory] = useState<MarketCategory>(MarketCategory.CreatorBets);
   const [creating, setCreating] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -168,6 +177,10 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
   const [activeMarketId, setActiveMarketId] = useState<string | null>(null);
   const [localActiveSnapshot, setLocalActiveSnapshot] = useState<MarketWithDetails | null>(null);
   const [walletProvisionSource, setWalletProvisionSource] = useState<'zashi' | 'zingo-cli' | 'preview' | null>(null);
+
+  // On-Chain Market Creation Anchor state
+  const [anchorTxInput, setAnchorTxInput] = useState<string>('');
+  const [anchoringMarket, setAnchoringMarket] = useState<boolean>(false);
 
   // Self-Custodial Hybrid Bet Verification state (No VPS)
   const [marketBets, setMarketBets] = useState<ShieldedBet[]>([]);
@@ -292,7 +305,12 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           };
         });
         rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-        setMarketBets(rows);
+        setMarketBets((prev) => {
+          if (rows.length === 0) return prev;
+          const seen = new Set(rows.map((r) => r.txid.toLowerCase()));
+          const extraLocal = prev.filter((p) => !seen.has(p.txid.toLowerCase()));
+          return [...rows, ...extraLocal].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        });
       },
       (err) => {
         if (!active) return;
@@ -379,7 +397,66 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       setPayoutAddress(existingUserCreator.zcashUnifiedAddress);
       return;
     }
-    setPayoutAddress('utest1hostpayout9x8c7v6b5n4m3l2k1j0h9g8f7d6s5a4p3o2i1u2y3t4r5e6w7q8');
+    setPayoutAddress(generateSampleTestnetUnifiedAddress('host'));
+  };
+
+  const creationAnchorUri = useMemo(() => {
+    if (!activeMarket) return null;
+    try {
+      return buildMarketAnchorZip321Uri({
+        marketId: activeMarket.id,
+        poolAddress: activeMarket.shieldedPoolAddress,
+        creatorAddress: activeMarket.creator.zcashUnifiedAddress,
+        question: activeMarket.question,
+      });
+    } catch {
+      return null;
+    }
+  }, [activeMarket]);
+
+  const handleAnchorMarketCreation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeMarket) return;
+    setActionError(null);
+    setActionSuccess(null);
+
+    if (!isValidOnChainTxid(anchorTxInput)) {
+      setActionError('Enter a valid 64-character hex Zcash Transaction ID (txid) to anchor this market.');
+      return;
+    }
+
+    const cleanTxid = normalizeOnChainTxid(anchorTxInput);
+    setAnchoringMarket(true);
+    try {
+      const res = await fetch(`/api/markets/${encodeURIComponent(activeMarket.id)}/anchor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ txid: cleanTxid }),
+      });
+      const json = (await res.json()) as {
+        market?: MarketWithDetails;
+        verification?: { message?: string };
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(json.error || 'Unable to anchor market creation transaction.');
+      }
+
+      setLocalActiveSnapshot((prev) =>
+        prev && prev.id === activeMarket.id
+          ? { ...prev, creationTxid: cleanTxid }
+          : json.market ?? prev
+      );
+      setAnchorTxInput('');
+      void onRefresh?.();
+      setActionSuccess(
+        `Market creation anchored on-chain (${formatShortTxid(cleanTxid)}). ${json.verification?.message || ''}`
+      );
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to anchor market transaction.');
+    } finally {
+      setAnchoringMarket(false);
+    }
   };
 
   const handleDecodeZashiMemo = (raw: string) => {
@@ -446,6 +523,27 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
     setVerifyingBet(true);
     try {
+      // Optional on-chain transaction lookup (non-blocking if tx is newly broadcasted)
+      let onChainMsg = '';
+      if (isValidOnChainTxid(cleanTxid)) {
+        try {
+          const verifyRes = await fetch('/api/zcash/tx/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              txid: cleanTxid,
+              address: activeMarket.shieldedPoolAddress,
+            }),
+          });
+          if (verifyRes.ok) {
+            const verifyJson = (await verifyRes.json()) as { message?: string };
+            if (verifyJson.message) onChainMsg = ` ${verifyJson.message}`;
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      }
+
       const betId = `bet_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
       const yesPool = Math.max(1, activeMarket.outcomes.yes.poolZatoshis);
       const noPool = Math.max(1, activeMarket.outcomes.no.poolZatoshis);
@@ -571,7 +669,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       setRawZashiMemoInput('');
       setMemoDecodeNote(null);
       setActionSuccess(
-        `Verified & locked ${parsedAmt.toFixed(4)} ZEC bet on ${verifyPick} in Firestore. Sentiment chart and Player Room notified.`
+        `Verified & locked ${parsedAmt.toFixed(4)} ZEC bet on ${verifyPick}.${onChainMsg}`
       );
     } catch (err) {
       setActionError(
@@ -613,6 +711,13 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       );
       return;
     }
+
+    const rawAnchorTxid = createAnchorTxid.trim();
+    if (rawAnchorTxid && !isValidOnChainTxid(rawAnchorTxid)) {
+      setFormError('Optional Creation Anchor TxID must be a valid 64-character hex Zcash txid.');
+      return;
+    }
+    const normalizedAnchorTxid = rawAnchorTxid ? normalizeOnChainTxid(rawAnchorTxid) : null;
 
     setCreating(true);
     try {
@@ -762,6 +867,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
         category,
         status: MarketStatus.Open,
         shieldedPoolAddress,
+        creationTxid: normalizedAnchorTxid,
         creatorFeeBps: 150,
         totalVolumeZatoshis: 0,
         liquidityZatoshis: initialSidePool * 2,
@@ -822,6 +928,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           resolutionCriteria,
           category,
           shieldedPoolAddress,
+          creationTxid: normalizedAnchorTxid,
           duration: durationHoursFloat,
           closesAt: closesAtIso,
         }),
@@ -833,6 +940,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
       setQuestion('');
       setCustomPoolAddress('');
       setCreateUfvk('');
+      setCreateAnchorTxid('');
       setActionSuccess(
         source === 'zashi'
           ? 'Market created with your self-custodial Zashi pool address (zero VPS required).'
@@ -1263,6 +1371,127 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
             </div>
           </div>
 
+          {/* ON-CHAIN MARKET ANCHOR (ZINGO TESTNET) */}
+          <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="space-y-1">
+                <h3 className="font-display text-base font-semibold text-slate-900">
+                  On-Chain Market Anchor (Zingo Testnet)
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Anchor this market creation on Zcash Testnet with a 0.0001 ZEC ZIP-321 memo tx so anyone can verify market provenance on-chain.
+                </p>
+              </div>
+              {activeMarket.creationTxid && (
+                <span className="font-mono text-xs font-semibold text-emerald-700 shrink-0">
+                  Verified On-Chain
+                </span>
+              )}
+            </div>
+
+            {activeMarket.creationTxid ? (
+              (() => {
+                const links = getZcashTxExplorerUrls(
+                  activeMarket.creationTxid,
+                  activeMarket.shieldedPoolAddress
+                );
+                return (
+                  <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="min-w-0 space-y-0.5">
+                      <span className="font-semibold text-emerald-950 block">
+                        Creation Anchor TxID ({links.network})
+                      </span>
+                      <p className="font-mono text-emerald-900 break-all select-all">
+                        {activeMarket.creationTxid}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 shrink-0">
+                      <a
+                        href={links.primaryUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-semibold text-emerald-900 hover:text-slate-900 underline underline-offset-2"
+                      >
+                        <span>{links.primaryLabel}</span>
+                        <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                      </a>
+                      <a
+                        href={links.secondaryUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-medium text-emerald-800 hover:text-slate-900 underline underline-offset-2"
+                      >
+                        <span>{links.secondaryLabel}</span>
+                        <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                      </a>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+                {creationAnchorUri && (
+                  <div className="lg:col-span-5 flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div className="p-2 bg-white border border-slate-200 rounded-lg shrink-0">
+                      <QRCodeSVG
+                        value={creationAnchorUri.uri}
+                        size={84}
+                        level="M"
+                        includeMargin={false}
+                        bgColor="#ffffff"
+                        fgColor="#0f172a"
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-1.5 text-xs">
+                      <p className="font-semibold text-slate-900">
+                        1. Broadcast 0.0001 TAZ Anchor
+                      </p>
+                      <p className="text-slate-600 line-clamp-2">
+                        Scan with Zingo / Zashi to commit market ID to pool.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <a
+                          href={creationAnchorUri.uri}
+                          className="font-semibold text-amber-800 hover:text-amber-900 underline underline-offset-2"
+                        >
+                          Open Wallet
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopy('anchor-uri', creationAnchorUri.uri)}
+                          className="font-medium text-slate-700 hover:text-slate-900 cursor-pointer"
+                        >
+                          {copiedKey === 'anchor-uri' ? 'Copied URI' : 'Copy URI'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => void handleAnchorMarketCreation(e)}
+                  className={`${creationAnchorUri ? 'lg:col-span-7' : 'lg:col-span-12'} flex flex-col sm:flex-row gap-2`}
+                >
+                  <input
+                    type="text"
+                    value={anchorTxInput}
+                    onChange={(e) => setAnchorTxInput(e.target.value)}
+                    placeholder="2. Paste 64-char hex creationTxid from Zingo Testnet..."
+                    aria-label="Market creation Zcash transaction ID"
+                    className="flex-1 min-h-[42px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={anchoringMarket}
+                    className="min-h-[42px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg whitespace-nowrap cursor-pointer"
+                  >
+                    {anchoringMarket ? 'Anchoring...' : 'Anchor & Verify Tx'}
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
+
           {/* ONE-TAP ZASHI MULTI-RECIPIENT BATCH PAYOUT (Shown when Resolved) */}
           {activeMarket.status === MarketStatus.Resolved && resolvedBatchPayout && (
             <section className="bg-white border border-emerald-300 rounded-xl p-4 sm:p-6 space-y-5">
@@ -1547,10 +1776,10 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
 
                     <button
                       type="submit"
-                      disabled={verifyingBet || !user}
+                      disabled={verifyingBet || !hasAnyIdentity}
                       className="w-full min-h-[44px] px-4 py-2.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
                     >
-                      {verifyingBet ? 'Recording Bet in Firestore...' : 'Confirm & Lock Zashi Bet'}
+                      {verifyingBet ? 'Recording Bet On-Chain...' : 'Confirm & Lock Zashi / Zingo Bet'}
                     </button>
                   </form>
                 )}
@@ -1590,30 +1819,51 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 {marketBets.length === 0 ? (
                   <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 leading-relaxed">
                     No incoming bets have been verified for this market yet. When a player scans your
-                    room QR in Zashi, paste the txid and decrypted memo on the left to record it.
+                    room QR in Zashi or Zingo Testnet, paste the txid and decrypted memo on the left to record it.
                   </div>
                 ) : (
                   <ul className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden max-h-[420px] overflow-y-auto">
-                    {marketBets.map((bet) => (
-                      <li key={bet.id} className="p-3.5 bg-white space-y-1.5 text-xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            className={`font-display font-bold ${
-                              bet.pick === OutcomeSide.Yes ? 'text-emerald-700' : 'text-rose-700'
-                            }`}
-                          >
-                            {bet.pick} · {zatoshisToZec(bet.amountZatoshis).toFixed(4)} ZEC
-                          </span>
-                          <span className="font-mono text-slate-500 tabular-nums">
-                            {bet.confirmations} conf
-                          </span>
-                        </div>
-                        <p className="font-mono text-slate-700 truncate">
-                          payout_to: {bet.payoutTo}
-                        </p>
-                        <p className="font-mono text-slate-400 truncate">txid: {bet.txid}</p>
-                      </li>
-                    ))}
+                    {marketBets.map((bet) => {
+                      const txLinks = getZcashTxExplorerUrls(
+                        bet.txid,
+                        activeMarket.shieldedPoolAddress
+                      );
+                      return (
+                        <li key={bet.id} className="p-3.5 bg-white space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className={`font-display font-bold ${
+                                bet.pick === OutcomeSide.Yes ? 'text-emerald-700' : 'text-rose-700'
+                              }`}
+                            >
+                              {bet.pick} · {zatoshisToZec(bet.amountZatoshis).toFixed(4)} ZEC
+                            </span>
+                            <span className="font-mono text-slate-500 tabular-nums">
+                              {bet.confirmations} conf
+                            </span>
+                          </div>
+                          <p className="font-mono text-slate-700 truncate">
+                            payout_to: {bet.payoutTo}
+                          </p>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-slate-500 truncate">
+                              txid: {formatShortTxid(bet.txid)}
+                            </span>
+                            {isValidOnChainTxid(bet.txid) && (
+                              <a
+                                href={txLinks.primaryUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 font-semibold text-amber-800 hover:text-slate-900 underline underline-offset-2 shrink-0"
+                              >
+                                <span>Verify Tx</span>
+                                <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                              </a>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
@@ -1740,7 +1990,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 >
                   {existingUserCreator?.zcashUnifiedAddress
                     ? 'Use My Saved Address'
-                    : 'Fill Sample u1... Address'}
+                    : 'Fill Zingo Testnet utest1...'}
                 </button>
               </div>
               <input
@@ -1845,10 +2095,24 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
               </select>
             </label>
 
+            {/* Optional On-Chain Market Creation Anchor TxID */}
+            <label className="block space-y-1.5">
+              <span className="block text-xs font-medium text-slate-700">
+                Creation Anchor TxID (Optional — or generate anchor QR after launch)
+              </span>
+              <input
+                type="text"
+                value={createAnchorTxid}
+                onChange={(e) => setCreateAnchorTxid(e.target.value)}
+                placeholder="Optional 64-char hex Zcash Testnet txid anchoring market creation..."
+                className="w-full min-h-[42px] px-3.5 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+              />
+            </label>
+
             <div className="pt-2">
               <button
                 type="submit"
-                disabled={creating || !user}
+                disabled={creating || !hasAnyIdentity}
                 className="w-full py-3 px-5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors duration-150 inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Plus className="w-4 h-4" aria-hidden="true" />

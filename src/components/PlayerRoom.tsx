@@ -38,7 +38,14 @@ import {
   zatoshisToZec,
   zecToZatoshis,
 } from '../lib/cpmm.ts';
-import { buildPlayerBetZip321Uri } from '../lib/zip321.ts';
+import { buildPlayerBetZip321Uri, utf8ToHex } from '../lib/zip321.ts';
+import {
+  formatShortTxid,
+  generateSampleTestnetUnifiedAddress,
+  getZcashTxExplorerUrls,
+  isValidOnChainTxid,
+  normalizeOnChainTxid,
+} from '../lib/explorers.ts';
 import { buildPollarPaymentParams } from '../lib/pollar-assets.ts';
 import { useAuth } from '../contexts/AuthContext.tsx';
 import { usePollarBridge } from '../contexts/PollarBridgeProvider.tsx';
@@ -119,6 +126,17 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
   const [pollingMempool, setPollingMempool] = useState<boolean>(false);
   const [pollNote, setPollNote] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Direct On-Chain Bet Transaction Verification (Zingo Testnet)
+  const [betTxidInput, setBetTxidInput] = useState<string>(initialPrefill?.txid || '');
+  const [verifyingBetTx, setVerifyingBetTx] = useState<boolean>(false);
+  const [betVerifyResult, setBetVerifyResult] = useState<{
+    ok: boolean;
+    message: string;
+    txid?: string;
+    explorerUrl?: string;
+    secondaryExplorerUrl?: string;
+  } | null>(null);
 
   // Pollar & Polygon Settlement Rail
   const [checkoutRail, setCheckoutRail] = useState<'zcash' | 'pollar'>(
@@ -249,6 +267,9 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
           category: (d.category as MarketCategory) || MarketCategory.CreatorBets,
           status: (d.status as MarketStatus) || MarketStatus.Open,
           shieldedPoolAddress: String(d.shieldedPoolAddress || ''),
+          creationTxid:
+            listMatchedMarket?.creationTxid ??
+            (typeof d.creationTxid === 'string' ? d.creationTxid : null),
           creatorFeeBps: Number(d.creatorFeeBps ?? 150),
           totalVolumeZatoshis: Number(d.totalVolumeZatoshis ?? 0),
           liquidityZatoshis: Number(d.liquidityZatoshis ?? yesPool + noPool),
@@ -371,7 +392,13 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
         }
 
         if (docs.length > 0) {
-          setRoomBets(docs);
+          setRoomBets((prev) => {
+            const seen = new Set(docs.map((d) => d.txid.toLowerCase()));
+            const extraLocal = prev.filter((p) => !seen.has(p.txid.toLowerCase()));
+            return [...docs, ...extraLocal].sort((a, b) =>
+              b.createdAt.localeCompare(a.createdAt)
+            );
+          });
         }
       },
       (err) => {
@@ -490,6 +517,155 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       setPollNote('Unable to reach /api/zcash/poll.');
     } finally {
       setPollingMempool(false);
+    }
+  };
+
+  const handleRecordAndVerifyBetTx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!market || isBettingDisabled) return;
+
+    setBetVerifyResult(null);
+    const rawTxid = betTxidInput.trim();
+    if (!isValidOnChainTxid(rawTxid)) {
+      setBetVerifyResult({
+        ok: false,
+        message: 'Enter a valid 64-character hex Zcash Transaction ID (txid) from Zingo Testnet.',
+      });
+      return;
+    }
+    if (validAmount <= 0) {
+      setBetVerifyResult({
+        ok: false,
+        message: 'Enter a positive ZEC bet amount in Step 2 before verifying.',
+      });
+      return;
+    }
+    if (!isReturnAddrValid) {
+      setBetVerifyResult({
+        ok: false,
+        message: 'Enter a valid Zcash return address (utest1... or u1...) in Step 3 first.',
+      });
+      return;
+    }
+
+    const cleanTxid = normalizeOnChainTxid(rawTxid);
+    setVerifyingBetTx(true);
+    try {
+      const verifyRes = await fetch('/api/zcash/tx/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txid: cleanTxid,
+          address: market.shieldedPoolAddress,
+        }),
+      });
+      const verifyJson = (await verifyRes.json()) as {
+        validFormat?: boolean;
+        txid?: string;
+        explorerUrl?: string;
+        secondaryExplorerUrl?: string;
+        confirmations?: number | null;
+        message?: string;
+        error?: string;
+      };
+
+      if (!verifyRes.ok || !verifyJson.validFormat) {
+        setBetVerifyResult({
+          ok: false,
+          message: verifyJson.message || verifyJson.error || 'Transaction format check failed.',
+        });
+        return;
+      }
+
+      const amountZatoshis = zecToZatoshis(validAmount);
+      const rawMemoHex = utf8ToHex(
+        JSON.stringify({
+          q: market.id,
+          pick: side,
+          payout_to: trimmedReturnAddr,
+        })
+      ).slice(0, 1024);
+
+      const betRes = await fetch(`/api/markets/${encodeURIComponent(market.id)}/bets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txid: cleanTxid,
+          poolType: 'orchard',
+          recipientAddress: market.shieldedPoolAddress,
+          pick: side,
+          payoutTo: trimmedReturnAddr,
+          amountZatoshis,
+          rawMemoHex,
+          confirmations: verifyJson.confirmations ?? 1,
+        }),
+      });
+      const betJson = (await betRes.json()) as {
+        inserted?: boolean;
+        bet?: ShieldedBet;
+        market?: MarketWithDetails;
+        error?: string;
+      };
+
+      if (!betRes.ok) {
+        throw new Error(betJson.error || 'Unable to store verified bet.');
+      }
+
+      if (betJson.market) {
+        setApiMarket(betJson.market);
+      }
+
+      const recordedBet: ShieldedBet =
+        betJson.bet ?? {
+          id: `bet_${Date.now().toString(36)}`,
+          marketId: market.id,
+          txid: cleanTxid,
+          poolType: 'orchard',
+          recipientAddress: market.shieldedPoolAddress,
+          pick: side,
+          payoutTo: trimmedReturnAddr,
+          amountZatoshis,
+          rawMemoHex,
+          decodedMemoJson: {
+            q: market.id,
+            pick: side,
+            payout_to: trimmedReturnAddr,
+          },
+          confirmations: verifyJson.confirmations ?? 1,
+          createdAt: new Date().toISOString(),
+        };
+
+      setRoomBets((prev) => {
+        if (prev.some((b) => normalizeOnChainTxid(b.txid) === cleanTxid)) {
+          return prev;
+        }
+        return [recordedBet, ...prev];
+      });
+
+      setToastBet({
+        txid: cleanTxid,
+        pick: side,
+        amountZatoshis,
+      });
+
+      setBetVerifyResult({
+        ok: true,
+        message:
+          betJson.inserted === false
+            ? `Transaction ${formatShortTxid(cleanTxid)} was already recorded. ${verifyJson.message || ''}`
+            : `Recorded ${validAmount} ZEC on ${side}. ${verifyJson.message || ''}`,
+        txid: cleanTxid,
+        explorerUrl: verifyJson.explorerUrl,
+        secondaryExplorerUrl: verifyJson.secondaryExplorerUrl,
+      });
+      setBetTxidInput('');
+    } catch (err) {
+      setBetVerifyResult({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Unable to record verified transaction.',
+      });
+    } finally {
+      setVerifyingBetTx(false);
     }
   };
 
@@ -702,10 +878,24 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
       {/* Market Header Summary */}
       <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <span className="font-medium text-slate-700">{market.category}</span>
             <span aria-hidden="true">·</span>
             <span className="truncate">@{market.creator.handle}</span>
+            {market.creationTxid && (
+              <>
+                <span aria-hidden="true">·</span>
+                <a
+                  href={getZcashTxExplorerUrls(market.creationTxid, market.shieldedPoolAddress).primaryUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 font-mono text-emerald-700 hover:text-emerald-800 underline underline-offset-2"
+                >
+                  <span>Anchored {formatShortTxid(market.creationTxid, 6, 4)}</span>
+                  <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                </a>
+              </>
+            )}
           </div>
           <MarketCountdown market={market} variant="card" />
         </div>
@@ -856,11 +1046,29 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
 
           {/* Return Address Input (persisted in localStorage) */}
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <label htmlFor="player-return-addr" className="font-medium text-slate-700">
-                3. Your Return / Payout Address (u1... / utest1...)
+                3. Your Return / Payout Address (utest1... / u1...)
               </label>
-              <span className="text-slate-400">Saved locally</span>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  disabled={isBettingDisabled}
+                  onClick={() => setReturnAddr(generateSampleTestnetUnifiedAddress('zingo'))}
+                  className="text-xs font-medium text-amber-700 hover:text-amber-800 cursor-pointer disabled:opacity-50"
+                >
+                  Use Zingo Testnet (utest1...)
+                </button>
+                {!walletSession && (
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('zcash')}
+                    className="text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    Connect Wallet
+                  </button>
+                )}
+              </div>
             </div>
             <input
               id="player-return-addr"
@@ -1013,6 +1221,78 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* Direct On-Chain Bet Verification (Zingo Testnet TxID) */}
+              {!isBettingDisabled && (
+                <form
+                  onSubmit={(e) => void handleRecordAndVerifyBetTx(e)}
+                  className="pt-4 border-t border-slate-100 space-y-2.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label
+                      htmlFor="player-bet-txid"
+                      className="text-xs font-semibold text-slate-800"
+                    >
+                      Verify &amp; Record Zingo Testnet Bet TxID
+                    </label>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      64-char hex txid
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      id="player-bet-txid"
+                      type="text"
+                      value={betTxidInput}
+                      onChange={(e) => setBetTxidInput(e.target.value)}
+                      placeholder="Paste broadcasted Zingo Testnet txid..."
+                      className="flex-1 min-h-[42px] px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:bg-white"
+                    />
+                    <button
+                      type="submit"
+                      disabled={verifyingBetTx}
+                      className="min-h-[42px] px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg whitespace-nowrap cursor-pointer"
+                    >
+                      {verifyingBetTx ? 'Verifying...' : 'Verify & Record Tx'}
+                    </button>
+                  </div>
+                  {betVerifyResult && (
+                    <div
+                      className={`p-3 rounded-lg border text-xs space-y-1.5 ${
+                        betVerifyResult.ok
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-800'
+                      }`}
+                    >
+                      <p className="font-medium">{betVerifyResult.message}</p>
+                      {betVerifyResult.explorerUrl && (
+                        <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                          <a
+                            href={betVerifyResult.explorerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 font-semibold underline underline-offset-2"
+                          >
+                            <span>Inspect on CipherScan Testnet</span>
+                            <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                          </a>
+                          {betVerifyResult.secondaryExplorerUrl && (
+                            <a
+                              href={betVerifyResult.secondaryExplorerUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 font-medium underline underline-offset-2"
+                            >
+                              <span>Zcash Testnet Explorer</span>
+                              <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </form>
               )}
             </>
           ) : (
@@ -1240,36 +1520,62 @@ export const PlayerRoom: React.FC<PlayerRoomProps> = ({
               <span className="font-semibold text-slate-600">
                 Your Detected Shielded Bets ({matchingUserBets.length})
               </span>
-              <span className="text-slate-400">Listening on Firestore shielded_bets</span>
+              <span className="text-slate-400">
+                {roomBets.length} total verified in room
+              </span>
             </div>
 
             {matchingUserBets.length === 0 ? (
               <p className="text-xs text-slate-500">
                 {isReturnAddrValid
-                  ? 'Waiting for an unspent Orchard/Sapling note with your payout_to address...'
+                  ? 'Waiting for an unspent Orchard/Sapling note or submitted txid with your payout_to address...'
                   : 'Enter your return address above to watch for incoming confirmations.'}
               </p>
             ) : (
               <ul className="space-y-2">
-                {matchingUserBets.map((bet) => (
-                  <li
-                    key={bet.id}
-                    className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <CheckCircle2
-                        className="w-4 h-4 text-emerald-700 shrink-0"
-                        aria-hidden="true"
-                      />
-                      <span className="font-medium text-emerald-900 truncate font-mono">
-                        {bet.pick} · {zatoshisToZec(bet.amountZatoshis).toFixed(4)} ZEC
-                      </span>
-                    </div>
-                    <span className="font-mono text-emerald-800 shrink-0">
-                      {bet.confirmations} conf
-                    </span>
-                  </li>
-                ))}
+                {matchingUserBets.map((bet) => {
+                  const explorerLinks = getZcashTxExplorerUrls(
+                    bet.txid,
+                    market.shieldedPoolAddress
+                  );
+                  return (
+                    <li
+                      key={bet.id}
+                      className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CheckCircle2
+                          className="w-4 h-4 text-emerald-700 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <div className="min-w-0">
+                          <span className="font-medium text-emerald-900 truncate font-mono block">
+                            {bet.pick} · {zatoshisToZec(bet.amountZatoshis).toFixed(4)} ZEC
+                          </span>
+                          <span className="font-mono text-[11px] text-emerald-700/80 block truncate">
+                            txid: {formatShortTxid(bet.txid)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        <span className="font-mono text-emerald-800">
+                          {bet.confirmations} conf
+                        </span>
+                        {isValidOnChainTxid(bet.txid) && (
+                          <a
+                            href={explorerLinks.primaryUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 font-semibold text-emerald-900 hover:text-slate-900 underline underline-offset-2"
+                          >
+                            <span>Verify Tx</span>
+                            <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                          </a>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

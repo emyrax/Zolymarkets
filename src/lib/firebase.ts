@@ -7,12 +7,33 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  Firestore,
+  doc,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+function createFirestoreClient(): Firestore {
+  if (typeof window !== 'undefined') {
+    try {
+      return initializeFirestore(
+        app,
+        { experimentalForceLongPolling: true },
+        firebaseConfig.firestoreDatabaseId
+      );
+    } catch {
+      // Fallback if Firestore instance was already initialized (e.g., HMR)
+    }
+  }
+  return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = createFirestoreClient();
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
@@ -76,11 +97,28 @@ export function handleFirestoreError(
  * Validates Cloud Firestore connectivity against the server on application boot.
  */
 async function testConnection(): Promise<void> {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+  if (typeof window !== 'undefined' && navigator.onLine === false) {
+    return;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await getDocFromServer(doc(db, 'test', 'connection'));
+      return;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message.toLowerCase() : '';
+      const isTransientOffline =
+        msg.includes('the client is offline') || msg.includes('unavailable');
+
+      if (isTransientOffline && attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        continue;
+      }
+
+      if (isTransientOffline) {
+        console.error('Please check your Firebase configuration.');
+      }
+      return;
     }
   }
 }
