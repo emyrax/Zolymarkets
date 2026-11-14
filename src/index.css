@@ -1,18 +1,40 @@
 @import "tailwindcss";
 
+/* Agentcard-inspired dark tokens */
+:root {
+  --bg-canvas: #09090b;
+  --bg-surface: #121215;
+  --bg-surface-hover: #1a1a1e;
+  --border-subtle: #27272a;
+  --border-glow: rgba(59, 130, 246, 0.4);
+
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+
+  --accent-blue: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.15);
+  --accent-yellow: #eab308;
+  --accent-cyan: #06d6a0;
+}
+
 @theme {
-  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "IvyPresto", "Instrument Serif", "Playfair Display", ui-serif-serif, serif;
+  --font-sans: "Inter", "Geist Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "VFT Mondwest", ui-monospace, SFMono-Regular, monospace;
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
+    background-color: var(--bg-canvas);
+    background-attachment: fixed;
   }
 
   body {
     overflow-x: clip;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
   }
 
   h1, h2, h3, .font-display {
@@ -31,4 +53,32 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+}
+
+/* Agentcard-specific utilities */
+.bg-grid {
+  background-image: radial-gradient(#27272a 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 25px rgba(59, 130, 246, 0.2);
+  transition: box-shadow 0.2s ease;
+}
+
+.heading-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.tag-mono {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 0.7em;
+  color: var(--accent-cyan);
+  background: rgba(6, 214, 160, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
 }
